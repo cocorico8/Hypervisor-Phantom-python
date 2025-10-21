@@ -41,10 +41,9 @@ def _configure_firewall_arch():
 
     if run_command(["pacman", "-Qs", "iptables-nft"]).returncode == 0:
         utils.log("iptables-nft detected. Configuring for iptables compatibility layer.")
-        # --- FIX IS HERE ---
         utils.update_config_file(
             '/etc/libvirt/network.conf',
-            r'^#?\s*firewall_backend',
+            r'^#?\s*firewall_backend\s*=',
             'firewall_backend = "iptables"',
             append_if_missing=True
         )
@@ -82,11 +81,10 @@ def _configure_system_installation():
         
     utils.info(f"Configuring for user: {current_user}")
 
-    # --- FIX IS HERE (four times) ---
-    utils.update_config_file(libvirtd_conf, r'^#?\s*unix_sock_group', 'unix_sock_group = "libvirt"', True)
-    utils.update_config_file(libvirtd_conf, r'^#?\s*unix_sock_rw_perms', 'unix_sock_rw_perms = "0770"', True)
-    utils.update_config_file(qemu_conf, r'^#?\s*user', f'user = "{current_user}"', True)
-    utils.update_config_file(qemu_conf, r'^#?\s*group', f'group = "{current_user}"', True)
+    utils.update_config_file(libvirtd_conf, r'^#?unix_sock_group\s*=', 'unix_sock_group = "libvirt"', True)
+    utils.update_config_file(libvirtd_conf, r'^#?unix_sock_rw_perms\s*=', 'unix_sock_rw_perms = "0770"', True)
+    utils.update_config_file(qemu_conf, r'^#?user\s*=', f'user = "{current_user}"', True)
+    utils.update_config_file(qemu_conf, r'^#?group\s*=', f'group = "{current_user}"', True)
     
     for group in ["kvm", "libvirt"]:
         try:

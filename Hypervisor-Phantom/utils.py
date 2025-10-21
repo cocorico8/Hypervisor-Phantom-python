@@ -6,6 +6,8 @@ import termios
 import tty
 import select
 import time
+import tempfile
+import re
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -334,57 +336,67 @@ def install_required_packages(component: str, required_packages: List[str], dist
 
 def update_config_file(file_path: str, pattern: str, new_line: str, append_if_missing: bool = False):
     """
-    Safely edits a root-owned file by writing to a temporary file and using sudo to
-    move it into place. This adheres to the Principle of Least Privilege.
+    Safely edits a root-owned file by using sudo to read the original content,
+    modifying it in memory, and using sudo to write it back.
     """
-    temp_file = None
-    try:
-        # Get original file stats to re-apply later
+
+    def _read_as_root(path):
+        """Helper function to read a file and its stats using sudo."""
         try:
-            original_stat = os.stat(file_path)
-            owner_uid, owner_gid = original_stat.st_uid, original_stat.st_gid
-        except FileNotFoundError:
-            # If the file doesn't exist, it will be owned by root by default
-            utils.warn(f"Config file not found: {file_path}. A new one will be created.")
-            owner_uid, owner_gid = 0, 0 # root:root
-            lines = []
-        else:
-             with open(file_path, 'r') as f:
-                lines = f.readlines()
+            stat_cmd = ["sudo", "stat", "-c", "%u %g %a", path]
+            stat_res = subprocess.run(stat_cmd, check=True, capture_output=True, text=True)
+            uid, gid, perms = stat_res.stdout.strip().split()
 
-        # Create a secure temporary file that our user can write to
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as temp:
-            temp_file = temp.name
+            cat_cmd = ["sudo", "cat", path]
+            cat_res = subprocess.run(cat_cmd, check=True, capture_output=True, text=True)
+            content_lines = cat_res.stdout.splitlines(True)
             
-            found = False
-            for line in lines:
-                if re.search(pattern, line.strip()):
-                    temp.write(new_line + '\n')
-                    found = True
-                else:
-                    temp.write(line)
-            
-            if not found and append_if_missing:
-                temp.write(new_line + '\n')
+            return content_lines, uid, gid, perms
+        except subprocess.CalledProcessError:
+            warn(f"Could not read '{path}' (it may not exist). A new one will be created.")
+            return [], '0', '0', '644' # Default to root:root, rw-r--r--
 
-        # --- Privilege Escalation Point ---
-        # The following commands use 'sudo' to perform root-level operations.
-        
-        # Move the temporary file to the final destination
-        utils.log(f"Applying changes to {file_path} with root privileges...")
-        subprocess.run(["sudo", "mv", temp_file, file_path], check=True)
-        
-        # Restore original ownership and permissions
-        subprocess.run(["sudo", "chown", f"{owner_uid}:{owner_gid}", file_path], check=True)
+    def _write_as_root(path, content_lines, uid, gid, perms):
+        """Helper function to write content to a file using sudo."""
+        temp_file = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as temp:
+                temp_file = temp.name
+                temp.writelines(content_lines)
 
-        utils.info(f"Successfully updated configuration in {file_path}")
+            log(f"Applying changes to {path} with root privileges...")
+            subprocess.run(["sudo", "mv", temp_file, path], check=True)
+            subprocess.run(["sudo", "chown", f"{uid}:{gid}", path], check=True)
+            subprocess.run(["sudo", "chmod", perms, path], check=True)
+        finally:
+            # Clean up the temp file even if an error occurs
+            if temp_file and os.path.exists(temp_file):
+                os.remove(temp_file)
+
+    try:
+        # STEP 1: Read the file and its metadata (as root).
+        original_lines, owner_uid, owner_gid, permissions = _read_as_root(file_path)
+
+        # STEP 2: Process the content in memory (as the user).
+        found = False
+        output_lines = []
+        for line in original_lines:
+            if re.search(pattern, line.strip()):
+                output_lines.append(new_line + '\n')
+                found = True
+            else:
+                output_lines.append(line)
+        
+        if not found and append_if_missing:
+            output_lines.append(new_line + '\n')
+
+        # STEP 3: Write the new content back (as root).
+        _write_as_root(file_path, output_lines, owner_uid, owner_gid, permissions)
+
+        info(f"Successfully updated configuration in {file_path}")
 
     except Exception as e:
-        utils.error(f"Failed to update {file_path}: {e}")
-    finally:
-        # Ensure the temporary file is always cleaned up, even if an error occurs
-        if temp_file and os.path.exists(temp_file):
-            os.remove(temp_file)
+        error(f"An unexpected failure occurred while updating {file_path}: {e}")
 
 def get_resource_path(relative_path: str) -> Path:
     """

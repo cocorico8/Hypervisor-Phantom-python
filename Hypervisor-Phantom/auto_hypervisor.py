@@ -6,8 +6,6 @@ import subprocess
 import sys
 
 # Import our custom utility functions
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import utils
 
 # And all our modules
