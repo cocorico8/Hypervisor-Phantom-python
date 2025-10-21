@@ -1,0 +1,8 @@
+# Helper libraries for the CLI
+colorama
+getch
+requests
+
+# Tool for building the final executable
+pyinstaller
+nuitka

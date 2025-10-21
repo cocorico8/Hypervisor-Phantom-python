@@ -1,2 +1,14 @@
-src
+# Python generated files
+__pycache__
+.venv
+
+# Created by HpvP
 logs
+src
+output
+
+# Created by the build process of nuitka/pyinstaller
+*build
+*dist
+*onefile-build
+hvp-phantom*
