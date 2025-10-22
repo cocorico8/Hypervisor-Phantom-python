@@ -228,7 +228,7 @@ def _spoof_identifiers(cpu_vendor: str):
             c_file.write_text(content)
         utils.log("Spoofed USB serial numbers.")
 
-        # Spoof Drive Serial Numbers (with full model lists)
+        # Spoof Drive Serial Numbers
         ide_cd_models = [
             "HL-DT-ST BD-RE WH16NS60", "HL-DT-ST DVDRAM GH24NSC0", "HL-DT-ST BD-RE BH16NS40",
             "HL-DT-ST DVD+-RW GT80N", "HL-DT-ST DVD-RAM GH22NS30", "HL-DT-ST DVD+RW GCA-4040N",
@@ -296,7 +296,7 @@ def _compile_qemu():
     utils.log("Configuring QEMU build environment as user...")
     try:
         # Run configure and make as the original user for safety
-        _run_as_user(["./configure", "--target-list=x86_64-softmmu", "--enable-libusb", "--enable-spice"], cwd=qemu_source_path)
+        _run_as_user(["./configure", "--target-list=x86_64-softmmu", "--enable-libusb", "--enable-usb-redir", "--enable-spice", "--enable-spice-protocol"], cwd=qemu_source_path)
 
         utils.log(f"Building QEMU with {os.cpu_count()} threads as user...")
         _run_as_user(["make", f"-j{os.cpu_count()}"], cwd=qemu_source_path)
@@ -304,7 +304,7 @@ def _compile_qemu():
         # The 'install' step is the ONLY part that requires root
         if utils.yes_or_no("Build successful. Install QEMU to /usr/local/bin?"):
             utils.log("Installing QEMU with root privileges...")
-            # This is run directly with sudo by the script (which is already root)
+            # This is run directly with sudo by the script
             subprocess.run(["sudo", "make", "install"], cwd=qemu_source_path, check=True)
             utils.info("QEMU installed successfully!")
         else:

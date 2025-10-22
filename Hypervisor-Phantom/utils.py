@@ -148,80 +148,37 @@ def fail(message: str):
 
 def run_with_spinner(command: list[str], cwd: Path, env: dict = None):
     """
-    Runs a long-running command, displaying only a simple spinner.
-    The full command output is captured and saved to the debug log.
-    User input is ignored to prevent display disruption.
+    Runs a long-running command, providing simple start/end messages to the console
+    while streaming all detailed output to the debug log file.
     """
-    is_interactive = sys.stdout.isatty() and os.name == 'posix'
-    
-    if not is_interactive:
-        # Non-interactive fallback remains the same
-        log(f"Non-interactive mode: Executing command in '{cwd}'...")
-        result = subprocess.run(
-            command, cwd=cwd, env=env, capture_output=True, text=True,
-            encoding='utf-8', errors='replace'
-        )
-        log_handler.debug(result.stdout)
-        if result.returncode != 0:
-            error("Command failed. Full log output:")
-            print(result.stdout)
-            raise subprocess.CalledProcessError(result.returncode, command)
-        return
-
-    # --- Interactive Mode with Deadlock Prevention ---
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
+    cmd_str = ' '.join(command)
+    info(f"Running command: {cmd_str}")
+    log("This may take a while. Full output is in the log file.")
 
     try:
-        tty.setcbreak(fd)
-
-        spinner_chars = ['|', '/', '-', '\\']
-        spinner_index = 0
-        static_message = "  Running command..."
-        print(static_message, end='', flush=True)
-
-        log(f"Executing command in '{cwd}': {' '.join(command)}")
+        # We use Popen to stream the output in real-time
         process = subprocess.Popen(
             command, cwd=cwd, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding='utf-8', errors='replace', bufsize=1
         )
+
+        # Read the output line-by-line and send it to the debug log
+        if log_handler:
+            for line in iter(process.stdout.readline, ''):
+                log_handler.debug(line.strip())
         
-        # This loop correctly drains the output pipe while animating the spinner.
-        while process.poll() is None:
-            # Animate the spinner
-            spinner_char = spinner_chars[spinner_index % len(spinner_chars)]
-            print(f" {spinner_char}\r", end='', flush=True)
-            spinner_index += 1
+        # Wait for the process to complete
+        return_code = process.wait()
 
-            # Use select to check for output on the pipe without blocking.
-            # The timeout of 0.1 seconds drives the animation speed.
-            ready, _, _ = select.select([process.stdout], [], [], 0.1)
-            
-            if ready:
-                # There is output to read. We must read it to prevent the pipe from filling up.
-                line = process.stdout.readline()
-                if line:
-                    # We save it to the log but DO NOT print it to the console.
-                    log_handler.debug(line.strip())
+        if return_code != 0:
+            # The error message is already in the log. Fail with a clear message.
+            fail(f"Command failed with exit code {return_code}. Check the log for details.")
         
-        # Clean up the final spinner line
-        print(" Done.          ", flush=True)
+        log("Command completed successfully.")
 
-        # After the process finishes, there might be some remaining output.
-        # We read it to ensure our logs are complete.
-        remaining_output = process.stdout.read()
-        if remaining_output:
-            log_handler.debug(f"Remaining command output:\n{remaining_output}")
-
-        if process.returncode != 0:
-            error("The command failed. See the log file for the full output.")
-            raise subprocess.CalledProcessError(process.returncode, command)
-
-    finally:
-        # ALWAYS restore the terminal and flush the input buffer
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        termios.tcflush(fd, termios.TCIFLUSH)
+    except Exception as e:
+        fail(f"An unexpected error occurred while running command: {e}")
 
 # ==============================================================================
 # 3. USER PROMPTS (from prompter.sh)
@@ -256,12 +213,25 @@ def yes_or_no(question: str) -> bool:
             error("Please answer y/n.")
 
 def quick_prompt(prompt: str) -> str:
-    """Prompts the user and captures a single keypress."""
+    """
+    Prompts the user and captures a single keypress.
+    This version correctly handles Ctrl+C to prevent tracebacks.
+    """
     print(prompt, end='', flush=True)
-    response = getch()
-    print() # Move to the next line after keypress
-    log_handler.info(f"User pressed a key for quick_prompt: '{response}'")
-    return response
+    try:
+        # We wrap the potentially buggy function call in a try block
+        response = getch()
+        print() # Move to the next line only if a key was actually pressed
+        log_handler.info(f"User pressed a key for quick_prompt: '{response}'")
+        return response
+    except KeyboardInterrupt:
+        # If Ctrl+C is pressed, we catch it here and exit cleanly.
+        print() # Move to a new line for a clean exit
+        fail("Operation cancelled by user.")
+    except Exception:
+        # Catch any other weird error from getch() like OverflowError
+        print()
+        fail("An error occurred reading user input.")
 
 # ==============================================================================
 # 4. PACKAGE MANAGEMENT (from packages.sh)

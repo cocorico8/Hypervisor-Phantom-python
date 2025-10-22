@@ -56,13 +56,25 @@ def _acquire_tkg_source():
     except subprocess.CalledProcessError:
         utils.fail("Failed to clone linux-tkg repository.")
 
-def _prompt_for_choice(prompt_text: str, options: dict) -> str:
-    """A generic helper to display a menu and get a valid choice."""
+def _select_from_menu(prompt_text: str, options: dict) -> str:
+    """
+    Displays a numbered menu of options, validates user input, and returns the chosen value.
+    """
     while True:
-        choice = utils.ask(prompt_text)
+        utils.log(f"[?] Asking user: {prompt_text}")
+        print(f"\n  [?] {prompt_text}\n")
+        for key, (name, value) in options.items():
+            print(f"    {utils.Fore.YELLOW}[{key}] {utils.Fore.WHITE}{name}")
+        
+        print()
+        choice = utils.quick_prompt("    Enter your choice: ")
+
         if choice in options:
-            return options[choice]
-        utils.error("Invalid choice, please try again.")
+            selected_name, return_value = options[choice]
+            utils.info(f"User selected: {selected_name}")
+            return return_value
+        else:
+            utils.error("Invalid choice, please try again.")
 
 def _modify_customization_cfg(distro: str, cpu_vendor: str):
     """Guides the user through all configuration choices and modifies customization.cfg."""
@@ -72,40 +84,52 @@ def _modify_customization_cfg(distro: str, cpu_vendor: str):
     # User prompts
     acs_override = "true" if utils.yes_or_no("Apply ACS override kernel patch for better IOMMU groups?") else "false"
     
-    amd_opts = {"1": "zen", "2": "zen2", "3": "zen3", "4": "zen4", "5": "zen5", "6": "native_amd"}
-    intel_opts = {"1": "skylake", "2": "skylakex", "3": "icelake", "4": "rocketlake", "5": "alderlake", "6": "native_intel"}
+    amd_opts = {
+        "1": ("Zen 1 / Zen+", "znver1"),
+        "2": ("Zen 2", "znver2"),
+        "3": ("Zen 3", "znver3"),
+        "4": ("Zen 4", "znver4"),
+        "5": ("Zen 5", "znver5"),
+        "6": ("Native (Optimized for this specific CPU)", "native"), # 'native_amd' might be TKG specific, 'native' is safer for GCC
+    }
+    intel_opts = {
+        "1": ("Skylake", "skylake"),
+        "2": ("Skylake-X", "skylakex"),
+        "3": ("Ice Lake", "icelake"),
+        "4": ("Rocket Lake", "rocketlake"),
+        "5": ("Alder Lake", "alderlake"),
+        "6": ("Native (Optimized for this specific CPU)", "native"), # 'native_intel' might be TKG specific, 'native' is safer for GCC
+    }
     
     if "AuthenticAMD" in cpu_vendor:
-        cpu_opt = _prompt_for_choice("Select your AMD CPU μarch code name:", amd_opts)
+        cpu_opt = _select_from_menu("Select your AMD CPU μarch code name:", amd_opts)
     else:
-        cpu_opt = _prompt_for_choice("Select your Intel CPU μarch code name:", intel_opts)
+        cpu_opt = _select_from_menu("Select your Intel CPU μarch code name:", intel_opts)
 
     # Build the dictionary of config values
     config_values = {
-        "_distro": distro,
+        "_distro": distro, 
         "_version": KERNEL_VERSION,
         "_acs_override": acs_override,
         "_processor_opt": cpu_opt,
         "_user_patches_no_confirm": "true",
-        # Add other static values if needed
     }
 
     utils.info("Applying choices to customization.cfg...")
     try:
         lines = config_file.read_text().splitlines()
         new_lines = []
+        config_map = {key: f'{key}="{value}"' for key, value in config_values.items()}
+
         for line in lines:
             key = line.split('=', 1)[0]
-            if key in config_values:
-                new_lines.append(f'{key}="{config_values[key]}"')
-                # Remove the key so we know it has been processed
-                del config_values[key]
+            if key in config_map:
+                new_lines.append(config_map.pop(key))
             else:
                 new_lines.append(line)
         
-        # Append any keys that weren't found in the original file
-        for key, value in config_values.items():
-            new_lines.append(f'{key}="{value}"')
+        for key, formatted_line in config_map.items():
+            new_lines.append(formatted_line)
         
         config_file.write_text('\n'.join(new_lines) + '\n')
     except Exception as e:
@@ -118,7 +142,7 @@ def _patch_kernel(cpu_vendor: str):
     userpatches_dir.mkdir(exist_ok=True)
     
     vendor_short = "amd" if "AuthenticAMD" in cpu_vendor else "intel"
-    patch_name = f"zen-kernel-{KERNEL_MAJOR}.{KERNEL_MINOR}-{KERNEL_PATCH}-{vendor_short}.mypatch"
+    patch_name = f"{vendor_short}{KERNEL_MAJOR}{KERNEL_MINOR}.mypatch"
     patch_source = utils.get_resource_path("patches/Kernel") / patch_name
 
     if not patch_source.exists():
