@@ -27,6 +27,7 @@ VENDOR_ID = "Unknown"
 #  SYSTEM DETECTION FUNCTIONS
 # ==============================================================================
 
+
 def detect_distro() -> str:
     """
     Detects the Linux distribution based on /etc/os-release or package managers.
@@ -60,6 +61,7 @@ def detect_distro() -> str:
 
     return "Unknown"
 
+
 def detect_cpu_vendor() -> str:
     """
     Detects the CPU vendor ID from /proc/cpuinfo.
@@ -74,6 +76,7 @@ def detect_cpu_vendor() -> str:
         utils.error(f"Could not read /proc/cpuinfo: {ex}")
         return "Unknown"
     return "Unknown"
+
 
 def print_system_info():
     """
@@ -94,12 +97,18 @@ def print_system_info():
         with open("/proc/cpuinfo") as f:
             content = f.read()
             if "vmx" in content or "svm" in content:
-                output += f"\n  {utils.Fore.GREEN}✓ {virt_name} (Virtualization): Supported"
+                output += (
+                    f"\n  {utils.Fore.GREEN}✓ {virt_name} (Virtualization): Supported"
+                )
             else:
-                output += f"\n  {utils.Fore.RED}✗ {virt_name} (Virtualization): Not supported"
+                output += (
+                    f"\n  {utils.Fore.RED}✗ {virt_name} (Virtualization): Not supported"
+                )
                 show_output = True
     except FileNotFoundError:
-        output += f"\n  {utils.Fore.YELLOW}? Could not check for virtualization support."
+        output += (
+            f"\n  {utils.Fore.YELLOW}? Could not check for virtualization support."
+        )
         show_output = True
 
     # 2. Check for IOMMU support
@@ -126,9 +135,11 @@ def print_system_info():
         print(output)
         print(f"\n  ──────────────────────────────\n{utils.Style.RESET}")
 
+
 # ==============================================================================
 #  MAIN MENU AND APPLICATION LOGIC
 # ==============================================================================
+
 
 def main_menu():
     """
@@ -154,7 +165,7 @@ def main_menu():
 
         for key, value in menu_options.items():
             if key == "0":
-                continue # Print exit option last
+                continue  # Print exit option last
             print(f"  {utils.Fore.YELLOW}[{key}] {utils.Fore.WHITE}{value}")
 
         print(f"\n  {utils.Fore.RED}[0] {utils.Fore.WHITE}{menu_options['0']}\n")
@@ -189,7 +200,9 @@ def main_menu():
                         utils.error(f"Could not remove logs directory: {ex}")
                 sys.exit(0)
 
-            utils.quick_prompt(f"\n{utils.Fore.CYAN}[i] Press any key to return to the main menu...")
+            utils.quick_prompt(
+                f"\n{utils.Fore.CYAN}[i] Press any key to return to the main menu..."
+            )
         else:
             utils.error("Invalid option, please try again.")
             utils.quick_prompt(f"\n{utils.Fore.CYAN}[i] Press any key to continue...")
@@ -209,9 +222,11 @@ def main():
     VENDOR_ID = detect_cpu_vendor()
     utils.log(f"Detected Distro: {DISTRO}")
     utils.log(f"Detected CPU Vendor: {VENDOR_ID}")
-    
+
     if DISTRO == "Unknown" or VENDOR_ID == "Unknown":
-        utils.warn("Could not fully determine system environment. Some features may not work.")
+        utils.warn(
+            "Could not fully determine system environment. Some features may not work."
+        )
 
     # 3. Launch the main menu
     main_menu()
@@ -221,7 +236,7 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n") # Move to a new line after Ctrl+C
+        print("\n")  # Move to a new line after Ctrl+C
         utils.fail("Operation cancelled by user.")
     except Exception as e:
         utils.fail(f"An unexpected error occurred: {e}")

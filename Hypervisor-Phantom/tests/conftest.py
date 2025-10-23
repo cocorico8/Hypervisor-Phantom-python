@@ -1,6 +1,7 @@
 import pytest
 import utils
 
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_logging():
     """

@@ -19,23 +19,47 @@ EDK2_TAG = "edk2-stable202508"
 #  PACKAGE DEFINITIONS
 # ==============================================================================
 REQUIRED_PACKAGES = {
-    "Arch": [
-        "base-devel", "acpica", "git", "nasm", "python", "patch", "virt-firmware"
-    ],
+    "Arch": ["base-devel", "acpica", "git", "nasm", "python", "patch", "virt-firmware"],
     "Debian": [
-        "build-essential", "uuid-dev", "acpica-tools", "git", "nasm", "python-is-python3", "patch", "python3-virt-firmware"
+        "build-essential",
+        "uuid-dev",
+        "acpica-tools",
+        "git",
+        "nasm",
+        "python-is-python3",
+        "patch",
+        "python3-virt-firmware",
     ],
     "openSUSE": [
-        "gcc", "gcc-c++", "make", "acpica", "git", "nasm", "python3", "libuuid-devel", "patch", "virt-firmware"
+        "gcc",
+        "gcc-c++",
+        "make",
+        "acpica",
+        "git",
+        "nasm",
+        "python3",
+        "libuuid-devel",
+        "patch",
+        "virt-firmware",
     ],
     "Fedora": [
-        "gcc", "gcc-c++", "make", "acpica-tools", "git", "nasm", "python3", "libuuid-devel", "patch", "python3-virt-firmware"
-    ]
+        "gcc",
+        "gcc-c++",
+        "make",
+        "acpica-tools",
+        "git",
+        "nasm",
+        "python3",
+        "libuuid-devel",
+        "patch",
+        "python3-virt-firmware",
+    ],
 }
 
 # ==============================================================================
 #  HELPER FUNCTIONS
 # ==============================================================================
+
 
 def _run_command(command: list[str], cwd: Path, check=True, env=None):
     """Runs a command, logging its output."""
@@ -46,13 +70,14 @@ def _run_command(command: list[str], cwd: Path, check=True, env=None):
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        env=env
+        env=env,
     )
-    for line in iter(process.stdout.readline, ''):
+    for line in iter(process.stdout.readline, ""):
         utils.log_handler.debug(line.strip())
     retcode = process.wait()
     if check and retcode != 0:
         raise subprocess.CalledProcessError(retcode, command)
+
 
 def _validate_bmp(bmp_path: Path) -> bool:
     """
@@ -75,16 +100,20 @@ def _validate_bmp(bmp_path: Path) -> bool:
             # I = 4-byte unsigned integer (height)
             # H = 2-byte unsigned short (bit depth)
             # I = 4-byte unsigned integer (compression)
-            magic, width, height, bit_depth, compression = struct.unpack('<2s16xIIHI', header[0:34])
+            magic, width, height, bit_depth, compression = struct.unpack(
+                "<2s16xIIHI", header[0:34]
+            )
 
-            if magic != b'BM':
+            if magic != b"BM":
                 utils.error(f"Invalid BMP magic number: {magic}")
                 return False
             if compression != 0:
                 utils.error(f"Unsupported BMP compression: {compression} (must be 0)")
                 return False
             if bit_depth not in [1, 4, 8, 24]:
-                utils.error(f"Unsupported bit depth: {bit_depth}-bit (must be 1, 4, 8, or 24)")
+                utils.error(
+                    f"Unsupported bit depth: {bit_depth}-bit (must be 1, 4, 8, or 24)"
+                )
                 return False
 
             utils.info(f"VALID: {width}x{height}, {bit_depth}-bit, No Compression")
@@ -93,9 +122,11 @@ def _validate_bmp(bmp_path: Path) -> bool:
         utils.error(f"Failed to read or validate BMP file: {e}")
         return False
 
+
 # ==============================================================================
 #  CORE LOGIC FUNCTIONS
 # ==============================================================================
+
 
 def _acquire_source(ovmf_patch_name: str, patch_dir: Path):
     """Clones the EDK2 repo, checks out the correct tag, and patches it."""
@@ -114,7 +145,10 @@ def _acquire_source(ovmf_patch_name: str, patch_dir: Path):
 
     try:
         utils.info(f"Cloning EDK2 tag '{EDK2_TAG}'... (this may take a while)")
-        _run_command(["git", "clone", "--depth=1", "--branch", EDK2_TAG, EDK2_URL, EDK2_TAG], cwd=SRC_DIR)
+        _run_command(
+            ["git", "clone", "--depth=1", "--branch", EDK2_TAG, EDK2_URL, EDK2_TAG],
+            cwd=SRC_DIR,
+        )
         utils.info("Initializing submodules...")
         _run_command(["git", "submodule", "update", "--init"], cwd=edk2_path)
         utils.info("EDK2 source successfully acquired.")
@@ -132,7 +166,7 @@ def _patch_ovmf(edk2_path: Path, patch_dir: Path, ovmf_patch_name: str):
     # 1. Apply the main OVMF patch
     utils.info(f"Applying patch '{ovmf_patch_name}'...")
     try:
-        with open(ovmf_patch_file, 'r') as f:
+        with open(ovmf_patch_file, "r") as f:
             subprocess.run(["git", "apply"], cwd=edk2_path, stdin=f, check=True)
         utils.info("Patch applied successfully.")
     except subprocess.CalledProcessError:
@@ -143,10 +177,10 @@ def _patch_ovmf(edk2_path: Path, patch_dir: Path, ovmf_patch_name: str):
     utils.info("Choose a BGRT BMP boot logo for OVMF:")
     print(f"  {utils.Fore.YELLOW}[1] Apply host's default logo (if available)")
     print(f"  {utils.Fore.YELLOW}[2] Apply a custom BMP image")
-    
+
     while True:
         choice = utils.quick_prompt("Enter choice [1-2]: ")
-        if choice == '1':
+        if choice == "1":
             host_logo = Path("/sys/firmware/acpi/bgrt/image")
             if host_logo.exists():
                 shutil.copy(host_logo, logo_dest)
@@ -154,9 +188,11 @@ def _patch_ovmf(edk2_path: Path, patch_dir: Path, ovmf_patch_name: str):
                 break
             else:
                 utils.error("Host BMP logo not found at /sys/firmware/acpi/bgrt/image.")
-        elif choice == '2':
+        elif choice == "2":
             while True:
-                custom_path_str = utils.ask("Enter the absolute path to your BMP image:")
+                custom_path_str = utils.ask(
+                    "Enter the absolute path to your BMP image:"
+                )
                 custom_path = Path(custom_path_str).expanduser()
                 if not custom_path.is_file():
                     utils.error("File does not exist. Try again.")
@@ -164,7 +200,7 @@ def _patch_ovmf(edk2_path: Path, patch_dir: Path, ovmf_patch_name: str):
                 if _validate_bmp(custom_path):
                     shutil.copy(custom_path, logo_dest)
                     utils.info("Custom BMP copied successfully.")
-                    return # Exit both loops
+                    return  # Exit both loops
                 else:
                     utils.error("Invalid BMP file. Please choose another.")
         else:
@@ -188,17 +224,24 @@ def _compile_ovmf():
 
         utils.info("Building BaseTools (this may take a moment)...")
         # Use the new spinner function for the 'make' command
-        utils.run_with_spinner(["make", "-C", "BaseTools", "-s"], cwd=edk2_path, env=build_env)
+        utils.run_with_spinner(
+            ["make", "-C", "BaseTools", "-s"], cwd=edk2_path, env=build_env
+        )
 
         utils.info(f"Compiling OVMF with the '{gcc_version_target}' toolchain tag...")
         build_flags = [
             "build -a X64 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE",
-            f"-t {gcc_version_target} -n 0", # The -s silent flag can be re-added if preferred
+            f"-t {gcc_version_target} -n 0",  # The -s silent flag can be re-added if preferred
         ]
-        build_flags.extend([
-            "--define SECURE_BOOT_ENABLE=TRUE", "--define TPM_CONFIG_ENABLE=TRUE",
-            "--define TPM_ENABLE=TRUE", "--define TPM1_ENABLE=TRUE", "--define TPM2_ENABLE=TRUE"
-        ])
+        build_flags.extend(
+            [
+                "--define SECURE_BOOT_ENABLE=TRUE",
+                "--define TPM_CONFIG_ENABLE=TRUE",
+                "--define TPM_ENABLE=TRUE",
+                "--define TPM1_ENABLE=TRUE",
+                "--define TPM2_ENABLE=TRUE",
+            ]
+        )
         build_command_str = " \\\n    ".join(build_flags)
 
         master_build_script = f"""
@@ -207,7 +250,9 @@ source edksetup.sh
 {build_command_str}
 """
         # Use the new spinner function for the main build script
-        utils.run_with_spinner(["bash", "-c", master_build_script], cwd=edk2_path, env=build_env)
+        utils.run_with_spinner(
+            ["bash", "-c", master_build_script], cwd=edk2_path, env=build_env
+        )
         utils.log("OVMF build command finished successfully.")
 
         # --- Post-build steps ---
@@ -217,18 +262,46 @@ source edksetup.sh
         output_dir.mkdir(parents=True, exist_ok=True)
         release_dir = edk2_path / f"Build/OvmfX64/RELEASE_{gcc_version_target}/FV"
         code_fd, vars_fd = release_dir / "OVMF_CODE.fd", release_dir / "OVMF_VARS.fd"
-        
+
         if not code_fd.exists() or not vars_fd.exists():
-            utils.fail(f"Compiled firmware files not found in {release_dir}. Build may have failed.")
+            utils.fail(
+                f"Compiled firmware files not found in {release_dir}. Build may have failed."
+            )
 
         code_dest = output_dir / "OVMF_CODE.secboot.4m.qcow2"
         vars_dest = output_dir / "OVMF_VARS.4m.qcow2"
-        subprocess.run(["qemu-img", "convert", "-f", "raw", "-O", "qcow2", str(code_fd), str(code_dest)], check=True)
-        subprocess.run(["qemu-img", "convert", "-f", "raw", "-O", "qcow2", str(vars_fd), str(vars_dest)], check=True)
+        subprocess.run(
+            [
+                "qemu-img",
+                "convert",
+                "-f",
+                "raw",
+                "-O",
+                "qcow2",
+                str(code_fd),
+                str(code_dest),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "qemu-img",
+                "convert",
+                "-f",
+                "raw",
+                "-O",
+                "qcow2",
+                str(vars_fd),
+                str(vars_dest),
+            ],
+            check=True,
+        )
         utils.info(f"Firmware files created in: {output_dir}")
 
     except subprocess.CalledProcessError:
-        utils.fail("The EDK2 build process failed. See the log file for the full output.")
+        utils.fail(
+            "The EDK2 build process failed. See the log file for the full output."
+        )
     except Exception as e:
         utils.fail(f"An unexpected error occurred during the build process: {e}")
 
@@ -241,18 +314,20 @@ def _generate_defaults_json(temp_dir: Path):
     utils.info("Generating defaults.json from host EFI variables...")
     efivar_dir = Path("/sys/firmware/efi/efivars")
     defaults_json_path = temp_dir / "defaults.json"
-    
+
     # List of variables to look for and their corresponding GUIDs
     vars_to_find = {
         "dbDefault": "8be4df61-93ca-11d2-aa0d-00e098032b8c",
         "KEKDefault": "8be4df61-93ca-11d2-aa0d-00e098032b8c",
         "PKDefault": "8be4df61-93ca-11d2-aa0d-00e098032b8c",
     }
-    
+
     json_data = {"version": 2, "variables": []}
 
     if not efivar_dir.is_dir():
-        utils.warn("Host EFI variables directory not found. Skipping defaults.json generation.")
+        utils.warn(
+            "Host EFI variables directory not found. Skipping defaults.json generation."
+        )
     else:
         for name, guid in vars_to_find.items():
             filepath = efivar_dir / f"{name}-{guid}"
@@ -260,23 +335,25 @@ def _generate_defaults_json(temp_dir: Path):
                 try:
                     raw_data = filepath.read_bytes()
                     # The first 4 bytes are the attributes, little-endian unsigned int
-                    attributes = struct.unpack('<I', raw_data[0:4])[0]
+                    attributes = struct.unpack("<I", raw_data[0:4])[0]
                     # The rest is the data payload
                     data_hex = raw_data[4:].hex()
-                    
-                    json_data["variables"].append({
-                        "name": name,
-                        "guid": guid,
-                        "attr": attributes,
-                        "data": data_hex
-                    })
+
+                    json_data["variables"].append(
+                        {
+                            "name": name,
+                            "guid": guid,
+                            "attr": attributes,
+                            "data": data_hex,
+                        }
+                    )
                     utils.log(f"Found and processed host EFI variable: {name}")
                 except (IOError, struct.error) as e:
                     utils.error(f"Failed to read or parse EFI variable {name}: {e}")
 
     # Write the collected data to the JSON file
     try:
-        with open(defaults_json_path, 'w') as f:
+        with open(defaults_json_path, "w") as f:
             json.dump(json_data, f, indent=4)
         utils.log(f"Successfully created defaults.json at {defaults_json_path}")
         return defaults_json_path
@@ -295,13 +372,19 @@ def _inject_certs():
     try:
         result = subprocess.run(
             ["sudo", "virsh", "list", "--all", "--name"],
-            capture_output=True, text=True, check=True
+            capture_output=True,
+            text=True,
+            check=True,
         )
-        vm_list = [vm for vm in result.stdout.strip().split('\n') if vm]
+        vm_list = [vm for vm in result.stdout.strip().split("\n") if vm]
         if not vm_list:
-            utils.error("No virtual machines found by virsh."); return
+            utils.error("No virtual machines found by virsh.")
+            return
     except (subprocess.CalledProcessError, FileNotFoundError):
-        utils.fail("Could not list virsh domains. Is libvirt running and are you in the libvirt group?"); return
+        utils.fail(
+            "Could not list virsh domains. Is libvirt running and are you in the libvirt group?"
+        )
+        return
 
     # 2. Present menu and get user's choice
     utils.info("Please select a VM to inject Microsoft Secure Boot keys into:")
@@ -313,16 +396,20 @@ def _inject_certs():
     while True:
         try:
             choice = int(utils.ask("Enter your choice:"))
-            if 0 <= choice <= len(vm_list): break
-            else: utils.error(f"Invalid choice.")
+            if 0 <= choice <= len(vm_list):
+                break
+            else:
+                utils.error(f"Invalid choice.")
         except ValueError:
             utils.error("Invalid input.")
     if choice == 0:
-        utils.info("Operation cancelled."); return
+        utils.info("Operation cancelled.")
+        return
     selected_vm_name = vm_list[choice - 1]
     original_vars_file = NVRAM_DIR / f"{selected_vm_name}_VARS.qcow2"
     if not original_vars_file.exists():
-        utils.fail(f"VARS file not found for {selected_vm_name}."); return
+        utils.fail(f"VARS file not found for {selected_vm_name}.")
+        return
     utils.log(f"Using base VARS file: {original_vars_file}")
 
     # 3. Download certificates into a secure temporary directory
@@ -335,9 +422,9 @@ def _inject_certs():
         "ms_db_optionrom_2023.der": f"{BASE_URL}/PreSignedObjects/DB/Certificates/microsoft%20option%20rom%20uefi%20ca%202023.der",
         "ms_db_uefi_2023.der": f"{BASE_URL}/PreSignedObjects/DB/Certificates/microsoft%20uefi%20ca%202023.der",
         "ms_db_windows_2023.der": f"{BASE_URL}/PreSignedObjects/DB/Certificates/windows%20uefi%20ca%202023.der",
-        "dbxupdate.bin": f"{BASE_URL}/PostSignedObjects/DBX/amd64/DBXUpdate.bin"
+        "dbxupdate.bin": f"{BASE_URL}/PostSignedObjects/DBX/amd64/DBXUpdate.bin",
     }
-    
+
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         utils.info(f"Downloading certificates to a temporary directory...")
@@ -348,33 +435,54 @@ def _inject_certs():
                 (temp_dir / filename).write_bytes(res.content)
                 utils.log(f"Downloaded {filename}")
         except requests.RequestException as e:
-            utils.fail(f"Failed to download certificate: {e}"); return
+            utils.fail(f"Failed to download certificate: {e}")
+            return
 
         # 4. Generate defaults.json from host efivars
         defaults_json_path = _generate_defaults_json(temp_dir)
 
         # 5. Construct and run the virt-fw-vars command (UPDATED)
         secure_vars_file = NVRAM_DIR / f"{selected_vm_name}_VARS_SECURE.qcow2"
-        uuid = "77fa9abd-0359-4d32-bd60-28f4e78f784b" # Standard MS UUID
+        uuid = "77fa9abd-0359-4d32-bd60-28f4e78f784b"  # Standard MS UUID
 
         cmd = [
-            "sudo", "virt-fw-vars",
-            "--input", str(original_vars_file),
-            "--output", str(secure_vars_file),
+            "sudo",
+            "virt-fw-vars",
+            "--input",
+            str(original_vars_file),
+            "--output",
+            str(secure_vars_file),
             "--secure-boot",
             # Platform Key (PK)
-            "--set-pk", uuid, str(temp_dir / "ms_pk_oem.der"),
+            "--set-pk",
+            uuid,
+            str(temp_dir / "ms_pk_oem.der"),
             # Key Exchange Keys (KEK)
-            "--add-kek", uuid, str(temp_dir / "ms_kek_2011.der"),
-            "--add-kek", uuid, str(temp_dir / "ms_kek_2023.der"),
+            "--add-kek",
+            uuid,
+            str(temp_dir / "ms_kek_2011.der"),
+            "--add-kek",
+            uuid,
+            str(temp_dir / "ms_kek_2023.der"),
             # Signature Database (db)
-            "--add-db", uuid, str(temp_dir / "ms_db_uef_2011.der"),
-            "--add-db", uuid, str(temp_dir / "ms_db_pro_2011.der"),
-            "--add-db", uuid, str(temp_dir / "ms_db_optionrom_2023.der"),
-            "--add-db", uuid, str(temp_dir / "ms_db_uefi_2023.der"),
-            "--add-db", uuid, str(temp_dir / "ms_db_windows_2023.der"),
+            "--add-db",
+            uuid,
+            str(temp_dir / "ms_db_uef_2011.der"),
+            "--add-db",
+            uuid,
+            str(temp_dir / "ms_db_pro_2011.der"),
+            "--add-db",
+            uuid,
+            str(temp_dir / "ms_db_optionrom_2023.der"),
+            "--add-db",
+            uuid,
+            str(temp_dir / "ms_db_uefi_2023.der"),
+            "--add-db",
+            uuid,
+            str(temp_dir / "ms_db_windows_2023.der"),
             # Forbidden Signatures Database (dbx)
-            "--set-dbx", str(temp_dir / "dbxupdate.bin"),
+            "--set-dbx",
+            str(temp_dir / "dbxupdate.bin"),
         ]
 
         # Add the json file to the command ONLY if it was created successfully
@@ -386,9 +494,13 @@ def _inject_certs():
             utils.run_with_spinner(cmd, cwd=Path.cwd())
             utils.log(f"Successfully created secure VARS file.")
             utils.info(f"New file created at: {secure_vars_file}")
-            utils.warn("To use this, you must manually edit the VM's XML to point to this new VARS file.")
+            utils.warn(
+                "To use this, you must manually edit the VM's XML to point to this new VARS file."
+            )
         except subprocess.CalledProcessError:
-            utils.fail("Failed to inject certificates using virt-fw-vars. Check the log.")
+            utils.fail(
+                "Failed to inject certificates using virt-fw-vars. Check the log."
+            )
 
 
 def _cleanup():
@@ -398,9 +510,11 @@ def _cleanup():
         utils.info(f"Removing source directory: {edk2_path}")
         shutil.rmtree(edk2_path)
 
+
 # ==============================================================================
 #  MAIN FUNCTION
 # ==============================================================================
+
 
 def main(distro: str, cpu_vendor: str):
     """Main menu and entry point for the OVMF patcher module."""
@@ -421,17 +535,17 @@ def main(distro: str, cpu_vendor: str):
         print(f"\n  {utils.Fore.RED}[0] Return to Main Menu")
 
         choice = utils.quick_prompt("Enter choice [0-2]: ")
-        if choice == '1':
+        if choice == "1":
             _acquire_source(ovmf_patch_name, PATCH_DIR)
             if utils.yes_or_no("Source is patched. Proceed with compilation?"):
                 _compile_ovmf()
             if not utils.yes_or_no("Keep EDK2 source for faster re-patching?"):
                 _cleanup()
             break
-        elif choice == '2':
+        elif choice == "2":
             _inject_certs()
             break
-        elif choice == '0':
+        elif choice == "0":
             utils.info("Returning to main menu.")
             break
         else:
