@@ -1,0 +1,50 @@
+name: Continuous Integration
+
+# --- TRIGGERS ---
+# This workflow runs on every push or pull request to the main branch
+on:
+  #push:
+    #branches: [ "main" ]
+  #pull_request:
+    #branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  ci-checks:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13.7
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.7'
+
+      # --- Step to install all dependencies, including our CI tools ---
+      - name: Install Python dependencies with uv
+        run: |
+          pip install uv
+          # Install from requirements.txt AND the tools we need for CI
+          uv pip install -r requirements.txt ruff black pytest
+
+      # --- Step to check for linting errors with Ruff ---
+      - name: Lint with Ruff
+        run: |
+          # 'ruff check .' scans the entire project for issues
+          ruff check .
+
+      # --- Step to check for formatting errors with Black ---
+      - name: Check formatting with Black
+        run: |
+          # 'black --check .' will fail if the code is not formatted correctly
+          black --check .
+
+      # --- Step to run automated tests with Pytest ---
+      # This step will pass if you have no tests, but will run them once you add them.
+      - name: Run tests with Pytest
+        run: |
+          # Pytest will automatically discover and run tests in your project
+          pytest

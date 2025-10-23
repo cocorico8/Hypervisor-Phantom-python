@@ -1,0 +1,84 @@
+name: Build and Release Executables
+
+# This workflow runs on pushes to main, manual triggers, and when a new release is published.
+on:
+  #push:
+    #branches: [ "main" ]
+  #release:
+    #types: [created]
+  workflow_dispatch:
+
+jobs:
+  # ====================================================================
+  # JOB 1: Build the executables for  Nuitka
+  # ====================================================================
+  build_executables:
+    name: Build Linux Executables
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13.7
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.7'
+
+      - name: Install System Dependencies (GCC, patchelf)
+        run: sudo apt-get update && sudo apt-get install -y patchelf build-essential
+
+      - name: Install Python Dependencies with uv (fast)
+        run: |
+          pip install uv
+          uv pip install -r requirements.txt
+
+      - name: Build with Nuitka
+        run: |
+          python -m nuitka --onefile --output-filename=hvp-phantom.bin \
+            --include-data-dir=patches=patches \
+            --include-data-dir=xml=xml \
+            auto_hypervisor.py
+
+      - name: Prepare Artifacts Directory
+        run: |
+          mkdir -p release_artifacts
+          mv hvp-phantom.bin release_artifacts/
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-executables
+          path: release_artifacts/
+
+  # ====================================================================
+  # JOB 2: Upload the executables to a new GitHub Release
+  # This job only runs if the trigger was a new release.
+  # ====================================================================
+  upload_to_release:
+    name: Attach Binaries to Release
+    if: github.event_name == 'release'
+    needs: build_executables # This job depends on the build job finishing successfully
+    runs-on: ubuntu-latest
+
+    # This permission is required to upload files to the release page
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download executables from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-executables
+          path: executables
+
+      - name: Display structure of downloaded files
+        run: ls -R executables
+
+      - name: Upload Assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # This command automatically finds the files and attaches them
+          # to the release that triggered this workflow.
+          files: |
+            executables/hvp-phantom.bin

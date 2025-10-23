@@ -1,7 +1,6 @@
 import os
 import subprocess
 import json
-import random
 import uuid
 import tempfile
 from pathlib import Path
@@ -44,17 +43,6 @@ def _get_dmidecode_info(dmi_type: str, field: str) -> str:
         return "Not Specified"
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "Not Specified"
-
-def _generate_random_mac():
-    """Generates a random, locally-administered, unicast MAC address."""
-    # 0x02 sets the locally administered bit
-    mac_bytes = [0x02,
-                 random.randint(0x00, 0xff),
-                 random.randint(0x00, 0xff),
-                 random.randint(0x00, 0xff),
-                 random.randint(0x00, 0xff),
-                 random.randint(0x00, 0xff)]
-    return ":".join(f"{b:02x}" for b in mac_bytes)
 
 # ==============================================================================
 #  MAIN FUNCTION
@@ -145,7 +133,7 @@ def main(cpu_vendor: str):
         utils.error("Failed to inject SMBIOS data. This is an optional step and can be ignored.")
 
     # --- Step 8: Set a random MAC address ---
-    mac_address = _generate_random_mac()
+    mac_address = utils.generate_random_mac()
     utils.info(f"Setting a random MAC address: {mac_address}")
     try:
         utils.run_with_spinner(

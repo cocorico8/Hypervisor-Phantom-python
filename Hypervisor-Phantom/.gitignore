@@ -12,3 +12,5 @@ output
 *dist
 *onefile-build
 hvp-phantom*
+
+test_logs

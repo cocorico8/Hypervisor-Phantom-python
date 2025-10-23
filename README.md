@@ -88,7 +88,7 @@ On every subsequent run, it will detect that the environment is already set up a
 <details>
 <summary>For advanced users who want to create a single-file executable...</summary>
 
-This project is set up to be compiled into a single, standalone binary using **PyInstaller** or **Nuitka**. This is useful for distributing the tool without requiring users to have Python installed. The setup is automated with GitHub Actions, but you can also build it locally.
+This project is set up to be compiled into a single, standalone binary using **Nuitka**. This is useful for distributing the tool without requiring users to have Python installed. The setup is automated with GitHub Actions, but you can also build it locally.
 
 #### 1. Prerequisites
 
@@ -102,21 +102,9 @@ sudo pacman -S base-devel patchelf
 sudo apt-get install build-essential patchelf
 ```
 
-#### 2. Build with PyInstaller
+#### 2. Build with Nuitka
 
-PyInstaller is a bundler. It's faster to build but results in a slightly slower-starting executable.
-```bash
-# Make sure your virtual environment is active
-source .venv/bin/activate
-
-# Run the build command
-./build-pyinstaller.sh
-```
-The final executable will be in the `dist/` directory.
-
-#### 3. Build with Nuitka
-
-Nuitka is a true compiler. It's slower to build but produces a highly optimized, faster-running executable.
+Nuitka is a true compiler. It's slow to build but produces a highly optimized, fast-running executable.
 ```bash
 # Make sure your virtual environment is active
 source .venv/bin/activate

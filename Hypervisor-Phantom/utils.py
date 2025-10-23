@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import subprocess
 import sys
 import tempfile
@@ -283,16 +284,7 @@ def install_required_packages(component: str, required_packages: List[str], dist
     if yes_or_no(f"Install these {len(missing_packages)} missing packages?"):
         info(f"Installing packages... See log file for details.")
         try:
-            # Run the install command. Output will be logged via the logger.
-            process = subprocess.Popen(install_cmd + missing_packages, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            # Log output line by line
-            for line in iter(process.stdout.readline, ''):
-                log_handler.debug(line.strip())
-            process.wait()
-
-            if process.returncode != 0:
-                fail(f"Failed to install packages. Check the log for details.")
-
+            run_with_spinner(install_cmd + missing_packages, cwd=Path.cwd())
             log("Packages installed successfully.")
         except Exception as ex:
             fail(f"An error occurred during installation: {ex}")
@@ -379,6 +371,17 @@ def get_resource_path(relative_path: str) -> Path:
         base_path = Path(__file__).parent.resolve()
     
     return base_path / relative_path
+
+def generate_random_mac():
+    """Generates a random, locally-administered, unicast MAC address."""
+    # 0x02 sets the locally administered bit
+    mac_bytes = [0x02,
+                 random.randint(0x00, 0xff),
+                 random.randint(0x00, 0xff),
+                 random.randint(0x00, 0xff),
+                 random.randint(0x00, 0xff),
+                 random.randint(0x00, 0xff)]
+    return ":".join(f"{b:02x}" for b in mac_bytes)
 
 if __name__ == "__main__":
     # ==========================================================================

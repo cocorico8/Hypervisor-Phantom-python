@@ -4,5 +4,4 @@ getch
 requests
 
 # Tool for building the final executable
-pyinstaller
 nuitka
