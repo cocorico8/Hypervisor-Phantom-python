@@ -1,7 +1,6 @@
 import os
 import subprocess
 import re
-import shutil
 import getpass
 import utils
 

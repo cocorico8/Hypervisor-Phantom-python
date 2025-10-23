@@ -2,14 +2,10 @@ import logging
 import os
 import subprocess
 import sys
-import termios
-import tty
-import select
-import time
 import tempfile
 import re
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict
 
 # Recommended third-party libraries for a better CLI experience
 try:
@@ -102,8 +98,8 @@ def setup_logging(log_path: str = "logs") -> None:
         ch.setFormatter(ConsoleFormatter())
         log_handler.addHandler(ch)
 
-    except Exception as e:
-        print(f"Failed to create log directory or file: {e}", file=sys.stderr)
+    except Exception as ex:
+        print(f"Failed to create log directory or file: {ex}", file=sys.stderr)
         sys.exit(1)
 
 def log(message: str):
@@ -177,8 +173,8 @@ def run_with_spinner(command: list[str], cwd: Path, env: dict = None):
         
         log("Command completed successfully.")
 
-    except Exception as e:
-        fail(f"An unexpected error occurred while running command: {e}")
+    except Exception as ex:
+        fail(f"An unexpected error occurred while running command: {ex}")
 
 # ==============================================================================
 # 3. USER PROMPTS (from prompter.sh)
@@ -298,8 +294,8 @@ def install_required_packages(component: str, required_packages: List[str], dist
                 fail(f"Failed to install packages. Check the log for details.")
 
             log("Packages installed successfully.")
-        except Exception as e:
-            fail(f"An error occurred during installation: {e}")
+        except Exception as ex:
+            fail(f"An error occurred during installation: {ex}")
     else:
         fail("User chose not to install required packages. Aborting.")
 
@@ -365,12 +361,12 @@ def update_config_file(file_path: str, pattern: str, new_line: str, append_if_mi
 
         info(f"Successfully updated configuration in {file_path}")
 
-    except Exception as e:
-        error(f"An unexpected failure occurred while updating {file_path}: {e}")
+    except Exception as ex:
+        error(f"An unexpected failure occurred while updating {file_path}: {ex}")
 
 def get_resource_path(relative_path: str) -> Path:
     """
-    Get the absolute path to a resource, works for dev and for PyInstaller.
+    Get the absolute path to a resource, works for dev and for PyInstaller/Nuitka.
     This is a CRITICAL function for making the executable work.
     """
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
@@ -415,7 +411,7 @@ if __name__ == "__main__":
         info(f"Demonstrating package installation for Distro: {detected_distro}")
         install_required_packages("QEMU", qemu_packages_arch, detected_distro)
 
-    except (KeyboardInterrupt):
+    except KeyboardInterrupt:
         print("\n")
         fail("Operation cancelled by user.")
     except Exception as e:

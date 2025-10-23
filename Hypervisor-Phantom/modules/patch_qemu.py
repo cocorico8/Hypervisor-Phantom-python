@@ -87,6 +87,25 @@ def _run_as_user(command: list[str], cwd: Path, check=True):
     if check and process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, command)
 
+def _apply_patch(patch_file: Path, source_dir: Path):
+    """A reusable helper to apply a single patch file to a source directory."""
+    utils.info(f"Applying patch: {patch_file.name}...")
+    try:
+        with open(patch_file, 'r', encoding='utf-8') as f:
+            subprocess.run(
+                ["patch", "-p1"],
+                cwd=source_dir,
+                stdin=f,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+        utils.log(f"Successfully applied patch: {patch_file.name}")
+    except subprocess.CalledProcessError as e:
+        utils.fail(f"Failed to apply patch {patch_file.name}. Error: {e.stderr}")
+    except Exception as e:
+        utils.fail(f"An unexpected error occurred while applying {patch_file.name}: {e}")
+
 # ==============================================================================
 #  MAIN LOGIC - ACQUIRE, PATCH, SPOOF, COMPILE
 # ==============================================================================
@@ -153,55 +172,104 @@ def _patch_qemu(cpu_vendor: str):
     """Applies custom patches to the QEMU source."""
     qemu_source_path = SRC_DIR / QEMU_DIR_NAME
 
-    vendor_map = {
-        "AuthenticAMD": "amd",
-        "GenuineIntel": "intel"
-    }
+    # 1. Define all the patch files
+    vendor_map = {"AuthenticAMD": "amd", "GenuineIntel": "intel"}
     short_vendor_name = vendor_map.get(cpu_vendor)
 
     if not short_vendor_name:
         utils.fail(f"Unsupported CPU Vendor for patching: {cpu_vendor}")
 
-    qemu_patch_file = PATCH_DIR / f"{short_vendor_name}-qemu-{QEMU_VERSION}.patch"
+    # Patches are now in a list to make it easy to add more later if needed
+    patches_to_apply = [
+        (PATCH_DIR / f"libnfs6-qemu-{QEMU_VERSION}.patch", False), # (file, is_mandatory)
+        (PATCH_DIR / f"{short_vendor_name}-qemu-{QEMU_VERSION}.patch", True),
+    ]
 
-    libnfs_patch_file = PATCH_DIR / f"libnfs6-qemu-{QEMU_VERSION}.patch"
-    
-    if not qemu_patch_file.exists():
-        utils.fail(f"Required patch file not found: {qemu_patch_file}")
-    
-    if not libnfs_patch_file.exists():
-        utils.warn(f"LibNFS patch file not found, skipping: {libnfs_patch_file}")
-    else:
+    # 2. Loop through the patches and apply them
+    for patch_file, is_mandatory in patches_to_apply:
+        if patch_file.exists():
+            # Call our new, clean helper function
+            _apply_patch(patch_file, qemu_source_path)
+        else:
+            if is_mandatory:
+                utils.fail(f"Required patch file not found: {patch_file}")
+            else:
+                utils.warn(f"Optional patch file not found, skipping: {patch_file}")
+
+def _ensure_dmi_sysfs():
+    """Checks if the dmi-sysfs module is loaded and tries to load it if not."""
+    dmi_path = Path("/sys/firmware/dmi/entries/4-0/raw")
+    if not dmi_path.exists():
+        utils.info("DMI sysfs entries not found, attempting to load 'dmi-sysfs' kernel module...")
         try:
-            with open(libnfs_patch_file, 'r') as f:
-                subprocess.run(
-                    ["patch", "-p1"],
-                    cwd=qemu_source_path,
-                    stdin=f,
-                    check=True,
-                    capture_output=True,
-                    text=True
-                )
-            utils.log(f"Successfully applied patch: {libnfs_patch_file.name}")
-        except subprocess.CalledProcessError as e:
-            utils.fail(f"Failed to apply LibNFS patch. Error: {e.stderr}")
+            subprocess.run(["sudo", "modprobe", "dmi-sysfs"], check=True, capture_output=True)
+            if not dmi_path.exists():
+                utils.warn("Failed to find DMI entries even after loading module. SMBIOS patching may be incomplete.")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            utils.warn("Could not run 'modprobe dmi-sysfs'. SMBIOS patching may be incomplete.")
 
-
-    utils.info("Applying main QEMU patch...")
+def _get_hex_data(file_path: Path) -> str:
+    """Reads a raw binary file and returns its uppercase hexadecimal string representation."""
+    if not file_path.exists():
+        return ""
     try:
-        with open(qemu_patch_file, 'r') as f:
-            subprocess.run(
-                ["patch", "-p1"],
-                cwd=qemu_source_path,
-                stdin=f,
-                check=True,
-                capture_output=True,
-                text=True
-            )
-        utils.log(f"Successfully applied patch: {qemu_patch_file.name}")
-    except subprocess.CalledProcessError as e:
-        utils.fail(f"Failed to apply main QEMU patch. Error: {e.stderr}")
+        # Use sudo to read the file, as it may be root-owned
+        result = subprocess.run(["sudo", "cat", str(file_path)], check=True, capture_output=True)
+        return result.stdout.hex().upper()
+    except (IOError, subprocess.CalledProcessError):
+        return ""
 
+def _patch_smbios_processor_data():
+    """
+    Reads the host's DMI Type 4 (Processor) data and patches it into the
+    QEMU source file 'hw/smbios/smbios.c'. This is called from inside _spoof_identifiers.
+    """
+    utils.info("Patching DMI Type 4 (Processor Information) into QEMU source...")
+    smbios_file = Path("hw/smbios/smbios.c")
+    data = _get_hex_data(Path("/sys/firmware/dmi/entries/4-0/raw"))
+    
+    if not data:
+        utils.error("Could not read DMI Type 4 data. Skipping patch.")
+        return
+
+    def parse_le(offset, length):
+        sub = data[offset*2 : (offset+length)*2]
+        if not sub: return "00"
+        return "".join(reversed([sub[i:i+2] for i in range(0, len(sub), 2)]))
+
+    # All values are extracted, even if not all are used, for future expansion
+    processor_family = data[12*2 : 13*2]
+    voltage = data[34*2 : 35*2]
+    external_clock = parse_le(36, 2)
+    l1_cache_handle = parse_le(52, 2)
+    l2_cache_handle = parse_le(56, 2)
+    l3_cache_handle = parse_le(60, 2)
+    processor_upgrade = data[50*2 : 51*2]
+    # NOTE: The original script used a 2-byte read here, but SMBIOS spec says 4 bytes (uint32)
+    processor_characteristics = parse_le(76, 4)
+    processor_family2 = parse_le(80, 2)
+
+    # Use the existing _replace_in_file helper for safety
+    replacements = {
+        r"(t->processor_family\s*=\s*)0x[0-9A-Fa-f]+;": rf"\g<1>0x{processor_family};",
+        r"(t->voltage\s*=\s*)0x[0-9A-Fa-f]+;": rf"\g<1>0x{voltage};",
+        r"(t->external_clock\s*=\s*cpu_to_le16\()0x[0-9A-Fa-f]+(\);)": rf"\g<1>0x{external_clock}\g<2>",
+        r"(t->l1_cache_handle\s*=\s*cpu_to_le16\()0x[0-9A-Fa-f]+(\);)": rf"\g<1>0x{l1_cache_handle}\g<2>",
+        r"(t->l2_cache_handle\s*=\s*cpu_to_le16\()0x[0-9A-Fa-f]+(\);)": rf"\g<1>0x{l2_cache_handle}\g<2>",
+        r"(t->l3_cache_handle\s*=\s*cpu_to_le16\()0x[0-9A-Fa-f]+(\);)": rf"\g<1>0x{l3_cache_handle}\g<2>",
+        r"(t->processor_upgrade\s*=\s*)0x[0-9A-Fa-f]+;": rf"\g<1>0x{processor_upgrade};",
+        # Updated to handle uint32 for characteristics
+        r"(t->processor_characteristics\s*=\s*cpu_to_le32\()0x[0-9A-Fa-f]+(\);)": rf"\g<1>0x{processor_characteristics}\g<2>",
+        r"(t->processor_family2\s*=\s*cpu_to_le16\()0x[0-9A-Fa-f]+(\);)": rf"\g<1>0x{processor_family2}\g<2>",
+    }
+
+    original_content = smbios_file.read_text(encoding='utf-8', errors='ignore')
+    modified_content = original_content
+    for pattern, replacement in replacements.items():
+        modified_content, count = re.subn(pattern, replacement, modified_content, flags=re.MULTILINE)
+
+    smbios_file.write_text(modified_content)
+    utils.log(f"Completed SMBIOS Type 4 patching for '{smbios_file.name}'.")
 
 def _spoof_identifiers(cpu_vendor: str):
     """Orchestrates all the spoofing functions."""
@@ -221,7 +289,7 @@ def _spoof_identifiers(cpu_vendor: str):
             content = c_file.read_text(encoding='utf-8', errors='ignore')
             for pat in patterns:
                 content = re.sub(
-                    rf'(\[\s*{pat}\s*\]\s*=\s*")[^"]*(")',
+                    rf'(\[\s*{pat}\s*]\s*=\s*")[^"]*(")' ,
                     lambda m: m.group(1) + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10)) + m.group(2),
                     content
                 )
@@ -284,6 +352,9 @@ def _spoof_identifiers(cpu_vendor: str):
         _replace_in_file(Path("include/hw/acpi/aml-build.h"), r'(#define ACPI_BUILD_APPNAME8\s*").*"', fr'\1{appname8}"')
         utils.log("Spoofed ACPI OEM IDs.")
 
+        _ensure_dmi_sysfs()
+        _patch_smbios_processor_data()
+
     finally:
         # CRITICAL: Always return to the original directory
         os.chdir(original_cwd)
@@ -305,7 +376,17 @@ def _compile_qemu():
         if utils.yes_or_no("Build successful. Install QEMU to /usr/local/bin?"):
             utils.log("Installing QEMU with root privileges...")
             # This is run directly with sudo by the script
-            subprocess.run(["sudo", "make", "install"], cwd=qemu_source_path, check=True)
+            result = subprocess.run(
+                ["sudo", "make", "install"],
+                cwd=qemu_source_path,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+
+            utils.log_handler.debug("--- Begin 'make install' output ---")
+            utils.log_handler.debug(result.stdout)
+            utils.log_handler.debug("--- End 'make install' output ---")
             utils.info("QEMU installed successfully!")
         else:
             utils.info("Skipping installation.")

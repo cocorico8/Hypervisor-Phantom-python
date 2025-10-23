@@ -70,8 +70,8 @@ def detect_cpu_vendor() -> str:
             for line in f:
                 if line.strip().startswith("vendor_id"):
                     return line.split(":")[1].strip()
-    except Exception as e:
-        utils.error(f"Could not read /proc/cpuinfo: {e}")
+    except Exception as ex:
+        utils.error(f"Could not read /proc/cpuinfo: {ex}")
         return "Unknown"
     return "Unknown"
 
@@ -185,8 +185,8 @@ def main_menu():
                         if os.path.isdir("logs"):
                             shutil.rmtree("logs")
                             utils.log("Logs directory cleared.")
-                    except Exception as e:
-                        utils.error(f"Could not remove logs directory: {e}")
+                    except Exception as ex:
+                        utils.error(f"Could not remove logs directory: {ex}")
                 sys.exit(0)
 
             utils.quick_prompt(f"\n{utils.Fore.CYAN}[i] Press any key to return to the main menu...")

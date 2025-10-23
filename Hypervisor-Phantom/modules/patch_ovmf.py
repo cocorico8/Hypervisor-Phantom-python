@@ -1,7 +1,6 @@
 import os
 import subprocess
 import shutil
-import getpass
 import tempfile
 import struct
 from pathlib import Path
