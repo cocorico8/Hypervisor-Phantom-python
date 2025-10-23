@@ -1,8 +1,8 @@
 <div align="center">
 
-# AutoVirt
+# Hypervisor Phantom
 
-This tool provides automated setups for linux virtualization related stuff.
+An advanced automation tool written in Python for setting up and hardening Linux KVM/QEMU environments. This script automates the process of patching QEMU, OVMF, and the Linux kernel to help evade hypervisor detection by sensitive applications.
 
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/kW8ZtQy6xU)](https://discord.gg/kW8ZtQy6xU)
 
@@ -10,35 +10,53 @@ This tool provides automated setups for linux virtualization related stuff.
 
 ---
 
+## ✨ Features
 
+*   **Interactive Menu:** A user-friendly, menu-driven interface to guide you through complex setups.
+*   **Automated Patching:** Automatically downloads, patches, and compiles custom versions of QEMU, OVMF (EDK2), and the Linux Kernel.
+*   **Cross-Distro Support:** Handles package management for Arch, Debian/Ubuntu, Fedora, and openSUSE.
+*   **Portable & Simple:** A single launcher script handles all dependencies and environment setup.
+*   **Advanced Spoofing:** Implements numerous techniques to hide KVM virtualization, including SMBIOS data, ACPI tables, and device serial numbers.
 
-## 📖 Setup Instruction Guide
+## 🚀 Getting Started
+
+This project is now a Python application with a simple launcher script to handle all setup.
+
+### Prerequisites
+
+*   `git`
+*   `python3` and `python3-pip`
+*   A C compiler toolchain (e.g., `base-devel` on Arch, `build-essential` on Debian/Ubuntu).
 
 <details>
-<summary>Expand for details...</summary>
+<summary><b>📖 Installation Guide</b></summary>
 
-```
-# 1. Clone into the repository
-git clone --single-branch --depth=1 https://github.com/Scrut1ny/Hypervisor-Phantom
+The project uses a smart launcher script (`run.sh`) that will automatically set up its own Python environment and install all necessary libraries on the first run.
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/Scrut1ny/Hypervisor-Phantom.git
 
 # 2. CD into the repository
-cd Hypervisor-Phantom/Hypervisor-Phantom/
+cd Hypervisor-Phantom
 
-# 3. Set executable permissions
-chmod -R +x *
-
-# 4. Run the script
-sudo ./Auto-Hypervisor.sh
+# 3. Run the script!
+./run.sh
 ```
 
 </details>
 
+### How It Works
 
+The `run.sh` script is the main entry point. On the very first run, it will:
+1.  Check for `uv`, a high-speed Python package installer, and install it if missing.
+2.  Create a local Python virtual environment in a `.venv/` directory.
+3.  Install all required Python libraries (like `colorama` and `requests`) into that environment.
+4.  Launch the main Python application (`auto_hypervisor.py`).
+
+On every subsequent run, it will detect that the environment is already set up and will launch the application immediately.
 
 ---
-
-
-
 
 ## 🛠️ Common Troubleshooting
 
@@ -63,12 +81,54 @@ sudo ./Auto-Hypervisor.sh
 
 </details>
 
-
-
 ---
 
+## 🏗️ Building from Source (Optional)
 
+<details>
+<summary>For advanced users who want to create a single-file executable...</summary>
 
+This project is set up to be compiled into a single, standalone binary using **PyInstaller** or **Nuitka**. This is useful for distributing the tool without requiring users to have Python installed. The setup is automated with GitHub Actions, but you can also build it locally.
+
+#### 1. Prerequisites
+
+First, ensure you have the necessary build tools installed.
+
+```bash
+# For Nuitka on Arch Linux (recommended)
+sudo pacman -S base-devel patchelf
+
+# For Nuitka on Debian/Ubuntu
+sudo apt-get install build-essential patchelf
+```
+
+#### 2. Build with PyInstaller
+
+PyInstaller is a bundler. It's faster to build but results in a slightly slower-starting executable.
+```bash
+# Make sure your virtual environment is active
+source .venv/bin/activate
+
+# Run the build command
+./build-pyinstaller.sh
+```
+The final executable will be in the `dist/` directory.
+
+#### 3. Build with Nuitka
+
+Nuitka is a true compiler. It's slower to build but produces a highly optimized, faster-running executable.
+```bash
+# Make sure your virtual environment is active
+source .venv/bin/activate
+
+# Run the build command
+./build-nuitka.sh
+```
+The final executable (`hvp-phantom`) will be in the project root.
+
+</details>
+
+---
 
 ## 📝 Documentation & References
 
@@ -121,9 +181,7 @@ sudo ./Auto-Hypervisor.sh
 
 </details>
 
-
 ---
-
 
 ## 💾 Software
 <details>
@@ -174,12 +232,6 @@ sudo ./Auto-Hypervisor.sh
 
 </details>
 
-
-
-
-
-
-
 <details>
 <summary>Virtual Video & Audio</summary>
 
@@ -201,14 +253,6 @@ sudo ./Auto-Hypervisor.sh
 
 </details>
 
-
-
-
-
-
-
-
-
 <details>
 <summary>VPN + Hypervisor</summary>
 
@@ -218,18 +262,9 @@ sudo ./Auto-Hypervisor.sh
 - For the VPN connection to get properly natted/bridged you must enable the setting `Local network sharing` option!
     - How to: `⚙️` > `VPN settings` > `Local network sharing` ✅
 
-![image](https://github.com/user-attachments/assets/18ba68b4-31ea-4c5e-9ad1-66417001820f)
-![image](https://github.com/user-attachments/assets/36465501-13fa-469b-bb66-f3db6003a64e)
-![image](https://github.com/user-attachments/assets/77890671-d024-491a-8d33-cb38e3503ef4)
-![image](https://github.com/user-attachments/assets/126e06bd-23c0-4cb9-9bfe-5a55fe6689ab)
+![image](https://github.com/user-attachments/assets/18ba68b4-31ea-4c5e-9ad1-66417001820f)![image](https://github.com/user-attachments/assets/36465501-13fa-469b-bb66-f3db6003a64e)![image](https://github.com/user-attachments/assets/77890671-d024-491a-8d33-cb38e3503ef4)![image](https://github.com/user-attachments/assets/126e06bd-23c0-4cb9-9bfe-5a55fe6689ab)
 
 </details>
-
-
-
-
-
-
 
 <details>
 <summary>Recommended Tools</summary>
@@ -257,11 +292,7 @@ sudo ./Auto-Hypervisor.sh
 
 </details>
 
-
-
 ---
-
-
 
 ## 🔩 Hardware
 
@@ -324,12 +355,6 @@ sudo ./Auto-Hypervisor.sh
 
 </details>
 
-
-
-
-
-
-
 <details>
 <summary>Elgato Capture Cards</summary>
 
@@ -364,14 +389,6 @@ Now, connect the capture card device back to your Linux host system now and open
 
 </details>
 
-
-
-
-
-
-
-
-
 ---
 
 > **⚠️ Legal Disclaimer**  
@@ -384,14 +401,7 @@ Now, connect the capture card device back to your Linux host system now and open
 > 
 > Use at your own risk. The tool is provided "as-is" without any warranties.
 
-
-
-
 ---
-
-
-
-
 
 ## Donations/Support ❤️
   - <img src="https://external-content.duckduckgo.com/ip3/z.cash.ico" width="16" height="16">  Zcash (ZEC)
@@ -408,14 +418,7 @@ Now, connect the capture card device back to your Linux host system now and open
     8C86X64ZWqmPEx72hNyBm8Ls6VL5j2nUH1G7pU9p7MAF9gWP4Nj7bbm5zz8SHngC4CHArmKY4BdVnKcoDH6dT8mw7kL2u9S
     ```
 
-
-
-
 ---
-
-
-
-
 
 ## Star History
 
