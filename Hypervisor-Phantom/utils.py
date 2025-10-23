@@ -366,15 +366,17 @@ def update_config_file(file_path: str, pattern: str, new_line: str, append_if_mi
 
 def get_resource_path(relative_path: str) -> Path:
     """
-    Get the absolute path to a resource, works for dev and for PyInstaller/Nuitka.
-    This is a CRITICAL function for making the executable work.
+    Get the absolute path to a resource.
+    Works correctly for both running from source and as a frozen (PyInstaller/Nuitka) executable.
     """
+    # Check if the application is running in a bundled state (e.g., PyInstaller)
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        # If so, the base path is the temporary directory PyInstaller creates
         base_path = Path(sys._MEIPASS)
     else:
-        # We are running in a normal Python environment
-        base_path = Path.cwd()
+        # If not, the base path is the directory containing the script files.
+        # We use __file__ which points to utils.py, and then get its parent directory.
+        base_path = Path(__file__).parent.resolve()
     
     return base_path / relative_path
 

@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import shutil
@@ -13,7 +14,6 @@ import requests
 SRC_DIR = Path("src")
 EDK2_URL = "https://github.com/tianocore/edk2.git"
 EDK2_TAG = "edk2-stable202508"
-PATCH_DIR = utils.get_resource_path("patches/EDK2")
 
 # ==============================================================================
 #  PACKAGE DEFINITIONS
@@ -97,7 +97,7 @@ def _validate_bmp(bmp_path: Path) -> bool:
 #  CORE LOGIC FUNCTIONS
 # ==============================================================================
 
-def _acquire_source(ovmf_patch_name: str):
+def _acquire_source(ovmf_patch_name: str, patch_dir: Path):
     """Clones the EDK2 repo, checks out the correct tag, and patches it."""
     SRC_DIR.mkdir(exist_ok=True)
     edk2_path = SRC_DIR / EDK2_TAG
@@ -109,7 +109,7 @@ def _acquire_source(ovmf_patch_name: str):
         else:
             utils.info("Keeping existing directory.")
             if utils.yes_or_no("Attempt to patch the existing source?"):
-                _patch_ovmf(edk2_path, ovmf_patch_name)
+                _patch_ovmf(edk2_path, patch_dir, ovmf_patch_name)
             return
 
     try:
@@ -118,14 +118,14 @@ def _acquire_source(ovmf_patch_name: str):
         utils.info("Initializing submodules...")
         _run_command(["git", "submodule", "update", "--init"], cwd=edk2_path)
         utils.info("EDK2 source successfully acquired.")
-        _patch_ovmf(edk2_path, ovmf_patch_name)
+        _patch_ovmf(edk2_path, patch_dir, ovmf_patch_name)
     except subprocess.CalledProcessError:
         utils.fail("Failed to acquire EDK2 source. Check the log.")
 
 
-def _patch_ovmf(edk2_path: Path, ovmf_patch_name: str):
+def _patch_ovmf(edk2_path: Path, patch_dir: Path, ovmf_patch_name: str):
     """Applies the CPU-specific patch and the custom BMP logo."""
-    ovmf_patch_file = PATCH_DIR / ovmf_patch_name
+    ovmf_patch_file = patch_dir / ovmf_patch_name
     if not ovmf_patch_file.exists():
         utils.fail(f"Patch file not found: {ovmf_patch_file}")
 
@@ -233,10 +233,63 @@ source edksetup.sh
         utils.fail(f"An unexpected error occurred during the build process: {e}")
 
 
+def _generate_defaults_json(temp_dir: Path):
+    """
+    Reads host EFI variables for Secure Boot defaults and creates a defaults.json file.
+    This is a robust Python translation of the complex bash hexdump/printf logic.
+    """
+    utils.info("Generating defaults.json from host EFI variables...")
+    efivar_dir = Path("/sys/firmware/efi/efivars")
+    defaults_json_path = temp_dir / "defaults.json"
+    
+    # List of variables to look for and their corresponding GUIDs
+    vars_to_find = {
+        "dbDefault": "8be4df61-93ca-11d2-aa0d-00e098032b8c",
+        "KEKDefault": "8be4df61-93ca-11d2-aa0d-00e098032b8c",
+        "PKDefault": "8be4df61-93ca-11d2-aa0d-00e098032b8c",
+    }
+    
+    json_data = {"version": 2, "variables": []}
+
+    if not efivar_dir.is_dir():
+        utils.warn("Host EFI variables directory not found. Skipping defaults.json generation.")
+    else:
+        for name, guid in vars_to_find.items():
+            filepath = efivar_dir / f"{name}-{guid}"
+            if filepath.is_file():
+                try:
+                    raw_data = filepath.read_bytes()
+                    # The first 4 bytes are the attributes, little-endian unsigned int
+                    attributes = struct.unpack('<I', raw_data[0:4])[0]
+                    # The rest is the data payload
+                    data_hex = raw_data[4:].hex()
+                    
+                    json_data["variables"].append({
+                        "name": name,
+                        "guid": guid,
+                        "attr": attributes,
+                        "data": data_hex
+                    })
+                    utils.log(f"Found and processed host EFI variable: {name}")
+                except (IOError, struct.error) as e:
+                    utils.error(f"Failed to read or parse EFI variable {name}: {e}")
+
+    # Write the collected data to the JSON file
+    try:
+        with open(defaults_json_path, 'w') as f:
+            json.dump(json_data, f, indent=4)
+        utils.log(f"Successfully created defaults.json at {defaults_json_path}")
+        return defaults_json_path
+    except IOError as e:
+        utils.error(f"Failed to write defaults.json: {e}")
+        return None
+
+
 def _inject_certs():
     """Downloads MS Secure Boot certs and injects them into a selected VM's VARS file."""
     utils.info("Starting Secure Boot certificate injection process...")
     NVRAM_DIR = Path("/var/lib/libvirt/qemu/nvram")
+    BASE_URL = "https://github.com/microsoft/secureboot_objects/raw/refs/heads/main"
 
     # 1. Get list of available VMs from virsh
     try:
@@ -246,11 +299,9 @@ def _inject_certs():
         )
         vm_list = [vm for vm in result.stdout.strip().split('\n') if vm]
         if not vm_list:
-            utils.error("No virtual machines found by virsh.")
-            return
+            utils.error("No virtual machines found by virsh."); return
     except (subprocess.CalledProcessError, FileNotFoundError):
-        utils.fail("Could not list virsh domains. Is libvirt running and are you in the libvirt group?")
-        return
+        utils.fail("Could not list virsh domains. Is libvirt running and are you in the libvirt group?"); return
 
     # 2. Present menu and get user's choice
     utils.info("Please select a VM to inject Microsoft Secure Boot keys into:")
@@ -258,57 +309,51 @@ def _inject_certs():
         print(f"  {utils.Fore.YELLOW}[{i}] {vm_name}")
     print(f"\n  {utils.Fore.RED}[0] Cancel")
 
+    choice = -1
     while True:
         try:
             choice = int(utils.ask("Enter your choice:"))
-            if 0 <= choice <= len(vm_list):
-                break
-            else:
-                utils.error(f"Invalid choice. Please enter a number between 0 and {len(vm_list)}.")
+            if 0 <= choice <= len(vm_list): break
+            else: utils.error(f"Invalid choice.")
         except ValueError:
-            utils.error("Invalid input. Please enter a number.")
-    
+            utils.error("Invalid input.")
     if choice == 0:
-        utils.info("Operation cancelled.")
-        return
-
+        utils.info("Operation cancelled."); return
     selected_vm_name = vm_list[choice - 1]
     original_vars_file = NVRAM_DIR / f"{selected_vm_name}_VARS.qcow2"
     if not original_vars_file.exists():
-        utils.fail(f"VARS file not found for {selected_vm_name} at '{original_vars_file}'. Does the VM have UEFI firmware enabled?")
-        return
-        
-    utils.log(f"Selected VM: {selected_vm_name}")
+        utils.fail(f"VARS file not found for {selected_vm_name}."); return
     utils.log(f"Using base VARS file: {original_vars_file}")
 
     # 3. Download certificates into a secure temporary directory
     certs_to_download = {
-        "ms_pk_oem.der": "https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/PK/Certificate/WindowsOEMDevicesPK.der",
-        "ms_kek_2011.der": "https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/KEK/Certificates/MicCorKEKCA2011_2011-06-24.der",
-        "ms_kek_2023.der": "https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/KEK/Certificates/microsoft%20corporation%20kek%202k%20ca%202023.der",
-        "ms_db_uef_2011.der": "https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/DB/Certificates/MicCorUEFCA2011_2011-06-27.der",
-        "ms_db_pro_2011.der": "https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/DB/Certificates/MicWinProPCA2011_2011-10-19.der",
-        "ms_db_optionrom_2023.der": "https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/DB/Certificates/microsoft%20option%20rom%20uefi%20ca%202023.der",
-        "ms_db_uefi_2023.der": "https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/DB/Certificates/microsoft%20uefi%20ca%202023.der",
-        "ms_db_windows_2023.der": "https://raw.githubusercontent.com/microsoft/secureboot_objects/main/PreSignedObjects/DB/Certificates/windows%20uefi%20ca%202023.der",
-        "dbxupdate_x64.bin": "https://uefi.org/sites/default/files/resources/dbxupdate_x64.bin"
+        "ms_pk_oem.der": f"{BASE_URL}/PreSignedObjects/PK/Certificate/WindowsOEMDevicesPK.der",
+        "ms_kek_2011.der": f"{BASE_URL}/PreSignedObjects/KEK/Certificates/MicCorKEKCA2011_2011-06-24.der",
+        "ms_kek_2023.der": f"{BASE_URL}/PreSignedObjects/KEK/Certificates/microsoft%20corporation%20kek%202k%20ca%202023.der",
+        "ms_db_uef_2011.der": f"{BASE_URL}/PreSignedObjects/DB/Certificates/MicCorUEFCA2011_2011-06-27.der",
+        "ms_db_pro_2011.der": f"{BASE_URL}/PreSignedObjects/DB/Certificates/MicWinProPCA2011_2011-10-19.der",
+        "ms_db_optionrom_2023.der": f"{BASE_URL}/PreSignedObjects/DB/Certificates/microsoft%20option%20rom%20uefi%20ca%202023.der",
+        "ms_db_uefi_2023.der": f"{BASE_URL}/PreSignedObjects/DB/Certificates/microsoft%20uefi%20ca%202023.der",
+        "ms_db_windows_2023.der": f"{BASE_URL}/PreSignedObjects/DB/Certificates/windows%20uefi%20ca%202023.der",
+        "dbxupdate.bin": f"{BASE_URL}/PostSignedObjects/DBX/amd64/DBXUpdate.bin"
     }
     
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
-        utils.info(f"Downloading {len(certs_to_download)} certificates to a temporary directory...")
-        
+        utils.info(f"Downloading certificates to a temporary directory...")
         try:
             for filename, url in certs_to_download.items():
                 res = requests.get(url, timeout=15)
-                res.raise_for_status() # Raise an exception for bad status codes
+                res.raise_for_status()
                 (temp_dir / filename).write_bytes(res.content)
                 utils.log(f"Downloaded {filename}")
         except requests.RequestException as e:
-            utils.fail(f"Failed to download certificate: {e}")
-            return
+            utils.fail(f"Failed to download certificate: {e}"); return
 
-        # 4. Construct and run the virt-fw-vars command
+        # 4. Generate defaults.json from host efivars
+        defaults_json_path = _generate_defaults_json(temp_dir)
+
+        # 5. Construct and run the virt-fw-vars command (UPDATED)
         secure_vars_file = NVRAM_DIR / f"{selected_vm_name}_VARS_SECURE.qcow2"
         uuid = "77fa9abd-0359-4d32-bd60-28f4e78f784b" # Standard MS UUID
 
@@ -329,17 +374,21 @@ def _inject_certs():
             "--add-db", uuid, str(temp_dir / "ms_db_uefi_2023.der"),
             "--add-db", uuid, str(temp_dir / "ms_db_windows_2023.der"),
             # Forbidden Signatures Database (dbx)
-            "--set-dbx", str(temp_dir / "dbxupdate_x64.bin"),
+            "--set-dbx", str(temp_dir / "dbxupdate.bin"),
         ]
 
-        utils.info("Injecting certificates into new VARS file...")
+        # Add the json file to the command ONLY if it was created successfully
+        if defaults_json_path and defaults_json_path.exists():
+            cmd.extend(["--set-json", str(defaults_json_path)])
+
+        utils.info("Injecting certificates and vars into new VARS file...")
         try:
             utils.run_with_spinner(cmd, cwd=Path.cwd())
             utils.log(f"Successfully created secure VARS file.")
             utils.info(f"New file created at: {secure_vars_file}")
             utils.warn("To use this, you must manually edit the VM's XML to point to this new VARS file.")
         except subprocess.CalledProcessError:
-            utils.fail("Failed to inject certificates using virt-fw-vars. Check the log for details.")
+            utils.fail("Failed to inject certificates using virt-fw-vars. Check the log.")
 
 
 def _cleanup():
@@ -355,6 +404,8 @@ def _cleanup():
 
 def main(distro: str, cpu_vendor: str):
     """Main menu and entry point for the OVMF patcher module."""
+    PATCH_DIR = utils.get_resource_path("patches/EDK2")
+
     if distro not in REQUIRED_PACKAGES:
         utils.fail(f"OVMF patching is not supported for the detected distro: {distro}")
 
@@ -371,7 +422,7 @@ def main(distro: str, cpu_vendor: str):
 
         choice = utils.quick_prompt("Enter choice [0-2]: ")
         if choice == '1':
-            _acquire_source(ovmf_patch_name)
+            _acquire_source(ovmf_patch_name, PATCH_DIR)
             if utils.yes_or_no("Source is patched. Proceed with compilation?"):
                 _compile_ovmf()
             if not utils.yes_or_no("Keep EDK2 source for faster re-patching?"):

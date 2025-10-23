@@ -22,8 +22,6 @@ GPG_KEY = "CEACC9E15534EBABB82D3FA03353C9CEF108B584"
 
 # Using pathlib for robust path management
 SRC_DIR = Path("src")
-PATCH_DIR = utils.get_resource_path("patches/QEMU")
-FAKE_BATTERY_ACPITABLE = PATCH_DIR / "fake_battery.dsl"
 
 # ==============================================================================
 #  PACKAGE DEFINITIONS
@@ -168,7 +166,7 @@ def _acquire_qemu_source():
 
 
 
-def _patch_qemu(cpu_vendor: str):
+def _patch_qemu(cpu_vendor: str, patch_dir: Path):
     """Applies custom patches to the QEMU source."""
     qemu_source_path = SRC_DIR / QEMU_DIR_NAME
 
@@ -181,14 +179,13 @@ def _patch_qemu(cpu_vendor: str):
 
     # Patches are now in a list to make it easy to add more later if needed
     patches_to_apply = [
-        (PATCH_DIR / f"libnfs6-qemu-{QEMU_VERSION}.patch", False), # (file, is_mandatory)
-        (PATCH_DIR / f"{short_vendor_name}-qemu-{QEMU_VERSION}.patch", True),
+        (patch_dir / f"libnfs6-qemu-{QEMU_VERSION}.patch", False), # (file, is_mandatory)
+        (patch_dir / f"{short_vendor_name}-qemu-{QEMU_VERSION}.patch", True),
     ]
 
     # 2. Loop through the patches and apply them
     for patch_file, is_mandatory in patches_to_apply:
         if patch_file.exists():
-            # Call our new, clean helper function
             _apply_patch(patch_file, qemu_source_path)
         else:
             if is_mandatory:
@@ -271,7 +268,7 @@ def _patch_smbios_processor_data():
     smbios_file.write_text(modified_content)
     utils.log(f"Completed SMBIOS Type 4 patching for '{smbios_file.name}'.")
 
-def _spoof_identifiers(cpu_vendor: str):
+def _spoof_identifiers(cpu_vendor: str, fake_battery_dsl_path: Path):
     """Orchestrates all the spoofing functions."""
     utils.log("Spoofing all unique hardcoded QEMU identifiers...")
     qemu_source_path = SRC_DIR / QEMU_DIR_NAME
@@ -352,11 +349,49 @@ def _spoof_identifiers(cpu_vendor: str):
         _replace_in_file(Path("include/hw/acpi/aml-build.h"), r'(#define ACPI_BUILD_APPNAME8\s*").*"', fr'\1{appname8}"')
         utils.log("Spoofed ACPI OEM IDs.")
 
-        _ensure_dmi_sysfs()
-        _patch_smbios_processor_data()
+        utils.info("Obtaining machine's chassis-type...")
+        c_file_path = Path("hw/acpi/aml-build.c")
+
+        try:
+            # Get chassis type from dmidecode
+            chassis_proc = subprocess.run(["sudo", "dmidecode", "--string", "chassis-type"], capture_output=True,
+                                          text=True, check=True)
+            chassis_type = chassis_proc.stdout.strip()
+            utils.log(f"Detected chassis type: {chassis_type}")
+
+            pm_type = "2" if chassis_type == "Notebook" else "1"
+
+            # Patch the PM type in the C file
+            original_c_line = r'build_append_int_noprefix(tbl, 0 \/\* Unspecified \*\/'
+            replacement_c_line = f'build_append_int_noprefix(tbl, {pm_type} /* {chassis_type} */'
+            _replace_in_file(c_file_path, re.escape(original_c_line), replacement_c_line)
+
+            # If it's a notebook, generate the fake battery table
+            if chassis_type == "Notebook":
+                utils.warn(f"Host is a Notebook. Generating a fake battery ACPI table...")
+                home_dir = Path.home()
+                dsl_dest = home_dir / "fake_battery.dsl"
+                aml_dest = home_dir / "fake_battery.aml"
+
+                # Read template, replace placeholders, write to user's home
+                template_content = fake_battery_dsl_path.read_text()
+                template_content = template_content.replace("BOCHS", appname6.strip())
+                template_content = template_content.replace("BXPCSSDT", appname8.strip())
+                dsl_dest.write_text(template_content)
+
+                utils.info(f"Compiling ACPI table with 'iasl'...")
+                # Use a spinner because iasl can be slow
+                utils.run_with_spinner(["iasl", "-tc", str(dsl_dest)], cwd=home_dir)
+
+                utils.info(f"ACPI table saved to: {aml_dest}")
+                utils.warn(
+                    "It is highly recommended to passthrough this ACPI table in your VM's configuration (e.g., via QEMU args or libvirt XML).")
+
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            utils.error(f"Failed to process chassis type or generate battery table: {e}")
+            utils.warn("This is an optional step and can be ignored, but may affect anti-cheat compatibility.")
 
     finally:
-        # CRITICAL: Always return to the original directory
         os.chdir(original_cwd)
 
 
@@ -411,14 +446,17 @@ def _cleanup():
 
 def main(distro: str, cpu_vendor: str):
     """Main entry point for the QEMU patcher module."""
+    PATCH_DIR = utils.get_resource_path("patches/QEMU")
+    FAKE_BATTERY_ACPITABLE = PATCH_DIR / "fake_battery.dsl"
+
     if distro not in REQUIRED_PACKAGES:
         utils.fail(f"QEMU patching is not supported for the detected distro: {distro}")
 
     utils.install_required_packages("QEMU", REQUIRED_PACKAGES[distro], distro)
 
     _acquire_qemu_source()
-    _patch_qemu(cpu_vendor)
-    _spoof_identifiers(cpu_vendor)
+    _patch_qemu(cpu_vendor, PATCH_DIR)
+    _spoof_identifiers(cpu_vendor, FAKE_BATTERY_ACPITABLE)
 
     if utils.yes_or_no("Proceed with building and installing the patched QEMU?"):
         _compile_qemu()
