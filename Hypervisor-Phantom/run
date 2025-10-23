@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+# Exit immediately if any command fails
+set -e
+
+# --- Configuration ---
+VENV_DIR=".venv"
+MAIN_SCRIPT="auto_hypervisor.py"
+
+# --- Environment and First-Time Setup ---
+if [ ! -d "$VENV_DIR" ]; then
+    echo "--- First-time setup: Creating environment... ---"
+    if ! command -v uv &> /dev/null; then
+        echo "ℹ️  'uv' not found. Installing it globally via pip..."
+        python3 -m pip install uv
+        echo "✅ 'uv' installed. You may need to open a new terminal for the 'uv' command to be available everywhere."
+    fi
+
+    echo "ℹ️  Creating Python virtual environment in './$VENV_DIR'..."
+    uv sync --all-extras
+    echo "--- Setup complete! ---"
+fi
+
+# --- The Task Runner Logic ---
+COMMAND=$1
+
+# If a command is given, run it. Otherwise, run the main script.
+if [ -n "$COMMAND" ]; then
+    # Shift consumes the first argument, so subsequent args are passed to the tool
+    shift
+    case "$COMMAND" in
+        lint)
+            echo "--- Running linter (ruff) ---"
+            uv run ruff check . --fix "$@"
+            ;;
+        fmt)
+            echo "--- Formatting code (black) ---"
+            uv run black . "$@"
+            ;;
+        test)
+            echo "--- Running tests (pytest) ---"
+            uv run pytest -v "$@"
+            ;;
+        check)
+            echo "--- Running all quality checks ---"
+            $0 lint && $0 fmt && $0 test
+            ;;
+        build)
+            echo "--- Building the project ---"
+            uv run ./build.sh
+            ;;
+        *)
+            echo "Unknown command: $COMMAND"
+            echo "Available commands: lint, fmt, test, check, build"
+            exit 1
+            ;;
+    esac
+else
+    # --- Default Action: Launch the Application ---
+    echo "🚀 Launching Hypervisor Phantom..."
+    echo ""
+    ./$VENV_DIR/bin/python "$MAIN_SCRIPT"
+fi

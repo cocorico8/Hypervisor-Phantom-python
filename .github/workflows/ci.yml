@@ -27,8 +27,8 @@ jobs:
       - name: Install Python dependencies with uv
         run: |
           pip install uv
-          # Install from requirements.txt AND the tools we need for CI
-          uv pip install -r requirements.txt ruff black pytest
+          # This single command installs everything defined in pyproject.toml
+          uv sync --all-extras
 
       # --- Step to check for linting errors with Ruff ---
       - name: Lint with Ruff

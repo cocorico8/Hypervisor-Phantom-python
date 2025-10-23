@@ -18,9 +18,9 @@ An advanced automation tool written in Python for setting up and hardening Linux
 *   **Portable & Simple:** A single launcher script handles all dependencies and environment setup.
 *   **Advanced Spoofing:** Implements numerous techniques to hide KVM virtualization, including SMBIOS data, ACPI tables, and device serial numbers.
 
-## 🚀 Getting Started
+## 🚀 Getting Started (for Users)
 
-This project is now a Python application with a simple launcher script to handle all setup.
+This project is a Python application with a simple launcher script that handles all setup automatically. This is the recommended way for most users to run the tool.
 
 ### Prerequisites
 
@@ -29,32 +29,106 @@ This project is now a Python application with a simple launcher script to handle
 *   A C compiler toolchain (e.g., `base-devel` on Arch, `build-essential` on Debian/Ubuntu).
 
 <details>
-<summary><b>📖 Installation Guide</b></summary>
+<summary><b>📖 Installation & Usage Guide</b></summary>
 
-The project uses a smart launcher script (`run.sh`) that will automatically set up its own Python environment and install all necessary libraries on the first run.
+The project uses a smart launcher script (`run`) that will automatically set up its own Python environment and install all necessary libraries on the first run.
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/Scrut1ny/Hypervisor-Phantom.git
 
 # 2. CD into the repository
-cd Hypervisor-Phantom
+cd Hypervisor-Phantom/Hypervisor-Phantom
 
 # 3. Run the script!
-./run.sh
+./run
 ```
 
 </details>
 
 ### How It Works
 
-The `run.sh` script is the main entry point. On the very first run, it will:
+The `run` script is the main entry point. On the very first run, it will:
 1.  Check for `uv`, a high-speed Python package installer, and install it if missing.
 2.  Create a local Python virtual environment in a `.venv/` directory.
-3.  Install all required Python libraries (like `colorama` and `requests`) into that environment.
+3.  Install all required Python libraries from the project's lock file.
 4.  Launch the main Python application (`auto_hypervisor.py`).
 
 On every subsequent run, it will detect that the environment is already set up and will launch the application immediately.
+
+---
+
+## 👨‍💻 Developer & Contributor Guide
+
+<details>
+<summary>For those who want to contribute, test, or build the project from source...</summary>
+
+This project uses modern Python tooling (`uv` and `pyproject.toml`) for dependency management. All common development tasks are managed through a single, powerful launcher script: `run`.
+
+### 1. Initial Setup
+
+The `run` script is designed to set up the entire development environment for you on its first run.
+
+First, ensure you have the prerequisite tools. `uv` will be installed automatically if it's missing.
+```bash
+# Install uv manually if you prefer (optional)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Next, simply run the launcher script. It will detect that the environment is missing and build it for you.
+```bash
+# Clone the repository
+git clone https://github.com/Scrut1ny/Hypervisor-Phantom.git
+cd Hypervisor-Phantom/Hypervisor-Phantom
+
+# Run the script. It will create the .venv and install all dependencies.
+./run
+```
+The script will create a `.venv` directory and use `uv sync` to install all runtime and development dependencies from `pyproject.toml`.
+
+### 2. Development Tasks with `run`
+
+The `run` script acts as the main task runner for the project.
+
+| Command | Description |
+| :--- | :--- |
+| `./run` | Run the main application (default action). |
+| `./run test` | Run the automated test suite with `pytest`. |
+| `./run lint` | Check for code quality issues with `ruff` and apply fixes. |
+| `./run fmt` | Automatically format all code with `black`. |
+| `./run check` | Run `lint`, `fmt`, and `test` in sequence. |
+| `./run build` | Build a standalone executable using the `./build.sh` script. |
+
+For example, to run the test suite:
+```bash
+./run test
+```
+
+### 3. Building a Standalone Executable
+
+The project is configured to be built into a single, distributable binary. This is handled automatically by our [CD workflow](.github/workflows/build_and_release.yml), but you can also build it locally.
+
+#### Prerequisites
+
+First, ensure you have the necessary system build tools installed.
+
+```bash
+# For Arch Linux
+sudo pacman -S base-devel patchelf
+
+# For Debian/Ubuntu
+sudo apt-get install build-essential patchelf
+```
+
+#### Build Command
+
+Simply use the `build` command from our launcher script:
+```bash
+./run build
+```
+This will execute the `build.sh` script, which contains the logic for compiling the project (with Nuitka). The final executable will be name `hvp-phantom.bin`.
+
+</details>
 
 ---
 
@@ -78,41 +152,6 @@ On every subsequent run, it will detect that the environment is already set up a
   ```
   sudo cat /sys/firmware/dmi/tables/DMI > smbios.bin
   ```
-
-</details>
-
----
-
-## 🏗️ Building from Source (Optional)
-
-<details>
-<summary>For advanced users who want to create a single-file executable...</summary>
-
-This project is set up to be compiled into a single, standalone binary using **Nuitka**. This is useful for distributing the tool without requiring users to have Python installed. The setup is automated with GitHub Actions, but you can also build it locally.
-
-#### 1. Prerequisites
-
-First, ensure you have the necessary build tools installed.
-
-```bash
-# For Nuitka on Arch Linux (recommended)
-sudo pacman -S base-devel patchelf
-
-# For Nuitka on Debian/Ubuntu
-sudo apt-get install build-essential patchelf
-```
-
-#### 2. Build with Nuitka
-
-Nuitka is a true compiler. It's slow to build but produces a highly optimized, fast-running executable.
-```bash
-# Make sure your virtual environment is active
-source .venv/bin/activate
-
-# Run the build command
-./build-nuitka.sh
-```
-The final executable (`hvp-phantom`) will be in the project root.
 
 </details>
 

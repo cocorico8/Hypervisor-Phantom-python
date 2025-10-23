@@ -1,0 +1,18 @@
+[project]
+name = "hypervisor-phantom"
+version = "0.1.0"
+description = "A comprehensive, menu-driven Python tool to automate the setup and hardening of KVM/QEMU environments. It applies a suite of patches and spoofing techniques to QEMU, OVMF, and the Linux kernel to evade hypervisor detection from sensitive applications like anti-cheat or DRM."
+requires-python = ">=3.13.7"
+dependencies = [
+    "colorama>=0.4.6",
+    "getch>=1.0",
+    "requests>=2.32.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=25.9.0",
+    "nuitka>=2.8.4",
+    "pytest>=8.4.2",
+    "ruff>=0.14.2",
+]

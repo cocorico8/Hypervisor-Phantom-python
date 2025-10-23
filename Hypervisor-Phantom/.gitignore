@@ -7,10 +7,11 @@ logs
 src
 output
 
-# Created by the build process of nuitka/pyinstaller
-*build
-*dist
-*onefile-build
+# Created by the build process of nuitka
+*.build
+*.dist
+*.onefile-build
 hvp-phantom*
 
+# Created by pytest
 test_logs

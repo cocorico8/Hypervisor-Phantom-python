@@ -28,10 +28,11 @@ jobs:
       - name: Install System Dependencies (GCC, patchelf)
         run: sudo apt-get update && sudo apt-get install -y patchelf build-essential
 
-      - name: Install Python Dependencies with uv (fast)
+      - name: Install Python dependencies with uv
         run: |
           pip install uv
-          uv pip install -r requirements.txt
+          # This single command installs everything defined in pyproject.toml
+          uv sync --all-extras
 
       - name: Build with Nuitka
         run: |
