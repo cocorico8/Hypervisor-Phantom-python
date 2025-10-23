@@ -120,7 +120,7 @@ def main(cpu_vendor: str):
         )
     except subprocess.CalledProcessError:
         utils.fail(
-            f"Failed to define the VM with virsh. The generated XML may be invalid. Check the log."
+            "Failed to define the VM with virsh. The generated XML may be invalid. Check the log."
         )
     finally:
         os.remove(temp_xml_path)  # Clean up the temporary file

@@ -315,7 +315,7 @@ def install_required_packages(
     warn(f"Missing required packages: {', '.join(missing_packages)}")
 
     if yes_or_no(f"Install these {len(missing_packages)} missing packages?"):
-        info(f"Installing packages... See log file for details.")
+        info("Installing packages... See log file for details.")
         try:
             run_with_spinner(install_cmd + missing_packages, cwd=Path.cwd())
             log("Packages installed successfully.")

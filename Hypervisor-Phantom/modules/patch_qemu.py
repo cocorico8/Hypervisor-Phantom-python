@@ -167,7 +167,7 @@ def _acquire_qemu_source():
         shutil.rmtree(qemu_source_path)
 
     # Download files
-    utils.info(f"Downloading QEMU source and signature...")
+    utils.info("Downloading QEMU source and signature...")
     try:
         with requests.get(QEMU_URL, stream=True) as r:
             r.raise_for_status()
@@ -558,7 +558,7 @@ def _spoof_identifiers(cpu_vendor: str, fake_battery_dsl_path: Path):
             # If it's a notebook, generate the fake battery table
             if chassis_type == "Notebook":
                 utils.warn(
-                    f"Host is a Notebook. Generating a fake battery ACPI table..."
+                    "Host is a Notebook. Generating a fake battery ACPI table..."
                 )
                 home_dir = Path.home()
                 dsl_dest = home_dir / "fake_battery.dsl"
@@ -572,7 +572,7 @@ def _spoof_identifiers(cpu_vendor: str, fake_battery_dsl_path: Path):
                 )
                 dsl_dest.write_text(template_content)
 
-                utils.info(f"Compiling ACPI table with 'iasl'...")
+                utils.info("Compiling ACPI table with 'iasl'...")
                 # Use a spinner because iasl can be slow
                 utils.run_with_spinner(["iasl", "-tc", str(dsl_dest)], cwd=home_dir)
 

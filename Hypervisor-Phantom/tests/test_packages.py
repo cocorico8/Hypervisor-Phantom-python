@@ -1,5 +1,4 @@
 import subprocess
-import pytest
 
 # Import the code we want to test
 import utils

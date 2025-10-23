@@ -13,7 +13,7 @@ SRC_DIR = Path("src")
 LG_VERSION = "B7"
 LG_ARCHIVE_NAME = f"looking-glass-{LG_VERSION}.tar.gz"
 LG_SOURCE_DIR_NAME = f"looking-glass-{LG_VERSION}"
-LG_URL = f"https://looking-glass.io/artifact/stable/source"
+LG_URL = "https://looking-glass.io/artifact/stable/source"
 
 # ==============================================================================
 #  PACKAGE DEFINITIONS

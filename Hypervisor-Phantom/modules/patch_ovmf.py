@@ -399,7 +399,7 @@ def _inject_certs():
             if 0 <= choice <= len(vm_list):
                 break
             else:
-                utils.error(f"Invalid choice.")
+                utils.error("Invalid choice.")
         except ValueError:
             utils.error("Invalid input.")
     if choice == 0:
@@ -427,7 +427,7 @@ def _inject_certs():
 
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
-        utils.info(f"Downloading certificates to a temporary directory...")
+        utils.info("Downloading certificates to a temporary directory...")
         try:
             for filename, url in certs_to_download.items():
                 res = requests.get(url, timeout=15)
@@ -492,7 +492,7 @@ def _inject_certs():
         utils.info("Injecting certificates and vars into new VARS file...")
         try:
             utils.run_with_spinner(cmd, cwd=Path.cwd())
-            utils.log(f"Successfully created secure VARS file.")
+            utils.log("Successfully created secure VARS file.")
             utils.info(f"New file created at: {secure_vars_file}")
             utils.warn(
                 "To use this, you must manually edit the VM's XML to point to this new VARS file."
