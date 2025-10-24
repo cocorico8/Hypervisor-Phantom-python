@@ -1,287 +1,267 @@
+"""
+Module for configuring VFIO GPU passthrough.
+
+This module handles:
+1. Detecting the system's bootloader (GRUB or systemd-boot).
+2. Guiding the user to select a GPU for passthrough.
+3. Validating the selected GPU's IOMMU group to ensure it's safe to pass through.
+4. Creating the necessary VFIO modprobe configuration.
+5. Surgically adding/removing kernel parameters from the bootloader configuration.
+6. Triggering a bootloader update if required (e.g., for GRUB).
+"""
+
 import os
 import re
 import shutil
-import subprocess
 from pathlib import Path
+
 import utils
-
-# ==============================================================================
-#  CONSTANTS
-# ==============================================================================
-VFIO_CONF_PATH = Path("/etc/modprobe.d/vfio.conf")
-VFIO_KERNEL_OPTS_REGEX = r'\s*(intel_iommu=\w+|amd_iommu=\w+|iommu=\w+|vfio-pci\.ids=[^"\s]+|kvm\.ignore_msrs=\w+)'
+from config import paths
 
 
 # ==============================================================================
-#  HELPER AND DETECTION FUNCTIONS
+# MAIN CLASS
 # ==============================================================================
 
+class VFIOSetup:
+    """Orchestrates the setup or reversion of VFIO GPU passthrough settings."""
 
-def _detect_bootloader() -> tuple[str, Path | None]:
-    """Detects the bootloader and returns its type and primary config path."""
-    utils.info("Detecting system bootloader...")
-    grub_cfg = Path("/etc/default/grub")
-    if grub_cfg.is_file():
-        utils.log("GRUB bootloader detected.")
-        return "GRUB", grub_cfg
+    VFIO_CONF_PATH = Path("/etc/modprobe.d/vfio.conf")
+    # Regex to find all known kernel options related to VFIO
+    VFIO_KERNEL_OPTS_REGEX = re.compile(
+        r'\s*(?:intel_iommu=\w+|amd_iommu=\w+|iommu=\w+|vfio-pci\.ids=[^"\s]+|kvm\.ignore_msrs=\w+)'
+    )
 
-    sd_boot_dirs = [
-        Path("/boot/loader/entries"),
-        Path("/boot/efi/loader/entries"),
-        Path("/efi/loader/entries"),
-    ]
-    for entry_dir in sd_boot_dirs:
-        if entry_dir.is_dir():
-            utils.log(f"systemd-boot detected at: {entry_dir}")
-            return "systemd-boot", entry_dir
+    def __init__(self, cpu_vendor: str):
+        self.cpu_vendor = cpu_vendor
+        self.bootloader_type, self.config_path = self._detect_bootloader()
 
-    return "Unknown", None
+        if self.bootloader_type == "Unknown":
+            utils.fail("Could not detect GRUB or systemd-boot. Cannot proceed.")
 
+    @staticmethod
+    def _detect_bootloader() -> tuple[str, Path | None]:
+        """Detects the bootloader and returns its type and primary config path."""
+        utils.info("Detecting system bootloader...")
+        grub_cfg = Path("/etc/default/grub")
+        if grub_cfg.is_file():
+            utils.log("GRUB bootloader detected.")
+            return "GRUB", grub_cfg
 
-def _run_cmd(command: list[str]) -> str:
-    """Helper to run a command and return its stripped stdout."""
-    try:
-        return subprocess.check_output(command, text=True).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
+        sd_boot_dirs = [Path("/boot/loader/entries"), Path("/efi/loader/entries")]
+        for entry_dir in sd_boot_dirs:
+            if entry_dir.is_dir() and any(entry_dir.glob("*.conf")):
+                utils.log(f"systemd-boot detected at: {entry_dir}")
+                return "systemd-boot", entry_dir
 
+        return "Unknown", None
 
-def _select_gpu_and_validate_iommu() -> tuple[str, str, str]:
-    """
-    Finds GPUs, prompts user to select one, validates its IOMMU group,
-    and returns the comma-separated hardware IDs, PCI BDF, and vendor ID.
-    """
-    gpus = []
-    pci_devices_path = Path("/sys/bus/pci/devices")
-    for dev_path in pci_devices_path.iterdir():
+    @staticmethod
+    def _select_gpu_and_validate_iommu() -> tuple[str, str] | None:
+        """
+        Guides user to select a GPU, validates its IOMMU group, and returns
+        the comma-separated hardware IDs and the GPU's vendor ID.
+        """
+        utils.info("Scanning for GPUs and their IOMMU groups...")
+        gpus = []
         try:
-            if (dev_path / "class").read_text().strip().startswith("0x03"):
-                bdf = dev_path.name
-                desc = _run_cmd(["lspci", "-s", bdf])
-                gpus.append({"bdf": bdf, "path": dev_path, "desc": desc})
-        except (IOError, FileNotFoundError):
-            continue
+            pci_devices = list(Path("/sys/bus/pci/devices").iterdir())
+            for dev_path in pci_devices:
+                # Class 0x03 is for Display Controllers (GPUs)
+                if (dev_path / "class").read_text().strip().startswith("0x03"):
+                    desc = utils.run_command(["lspci", "-s", dev_path.name], Path.cwd(), capture_output=True).stdout
+                    gpus.append({"bdf": dev_path.name, "path": dev_path, "desc": desc.strip()})
+        except (IOError, FileNotFoundError, utils.CommandExecutionError):
+            utils.fail("Could not read PCI device information from /sys/.")
 
-    if not gpus:
-        utils.fail("No PCI devices with display controller class (0x03) found.")
-    if len(gpus) == 1:
-        utils.warn(
-            "Only one GPU detected. Passing it through will likely leave the host without a display."
-        )
+        if not gpus:
+            utils.fail("No GPUs found.")
 
-    utils.info("Please select the GPU you wish to pass through:")
-    for i, gpu in enumerate(gpus):
-        print(f"  {utils.Fore.YELLOW}[{i + 1}] {utils.Fore.WHITE}{gpu['desc']}")
+        utils.info("Please select the GPU you wish to pass through:")
+        for i, gpu in enumerate(gpus, 1):
+            print(f"  {utils.Fore.YELLOW}[{i}] {gpu['desc']}")
 
-    while True:
-        choice = utils.ask("Select device number:")
-        if choice.isdigit() and 1 <= int(choice) <= len(gpus):
-            selected_gpu = gpus[int(choice) - 1]
-            break
-        utils.error("Invalid selection.")
+        choice = -1
+        while choice < 1 or choice > len(gpus):
+            try:
+                choice = int(utils.ask(f"Select device number [1-{len(gpus)}]:"))
+            except ValueError:
+                utils.error("Invalid input.")
 
-    iommu_group_path = selected_gpu["path"] / "iommu_group"
-    if not iommu_group_path.is_symlink():
-        utils.fail(
-            "Selected GPU is not in an IOMMU group. Enable IOMMU in your BIOS/UEFI."
-        )
+        selected_gpu = gpus[choice - 1]
+        iommu_group_path = selected_gpu["path"] / "iommu_group"
+        if not iommu_group_path.is_symlink():
+            utils.fail("IOMMU is not enabled in your BIOS/UEFI. Please enable it (e.g., VT-d, AMD-Vi) and reboot.")
 
-    group_id = Path(os.readlink(iommu_group_path)).name
-    group_devices_path = Path(f"/sys/kernel/iommu_groups/{group_id}/devices")
+        group_id = Path(os.readlink(iommu_group_path)).name
+        group_devices_path = Path(f"/sys/kernel/iommu_groups/{group_id}/devices")
 
-    hw_ids, bad_functions = [], []
-    pci_bus_dev = selected_gpu["bdf"].rsplit(".", 1)[0]
+        hw_ids, bad_devices = [], []
+        pci_bus_id = selected_gpu["bdf"].rsplit(".", 1)[0]
 
-    for device in group_devices_path.iterdir():
-        vendor = (device / "vendor").read_text().strip()
-        dev_id = (device / "device").read_text().strip()
-        hw_ids.append(f"{vendor[2:]}:{dev_id[2:]}")
+        for device in group_devices_path.iterdir():
+            vendor = (device / "vendor").read_text().strip()[2:]
+            dev_id = (device / "device").read_text().strip()[2:]
+            hw_ids.append(f"{vendor}:{dev_id}")
 
-        if not device.name.startswith(pci_bus_dev):
-            bad_functions.append(
-                f"  - {device.name} ({_run_cmd(['lspci', '-s', device.name])})"
+            # A group is "bad" if it contains non-GPU devices on a different PCI bus ID
+            if not device.name.startswith(pci_bus_id):
+                desc = utils.run_command(["lspci", "-s", device.name], Path.cwd(), capture_output=True).stdout
+                bad_devices.append(f"  - {device.name} ({desc.strip()})")
+
+        if bad_devices:
+            utils.fail(
+                f"Bad IOMMU group detected!\nGroup #{group_id} contains essential non-GPU devices:\n"
+                + "\n".join(bad_devices)
+                + "\n\nAborting. This can sometimes be fixed with an ACS override kernel patch."
             )
 
-    if bad_functions:
-        utils.fail(
-            f"Bad IOMMU group detected!\nGroup #{group_id} also contains essential non-GPU devices:\n"
-            + "\n".join(bad_functions)
-            + "\nAborting. This must be fixed with an ACS override patch, BIOS update, or different hardware."
-        )
+        utils.log("IOMMU group validation successful.")
+        gpu_vendor_id = (selected_gpu["path"] / "vendor").read_text().strip()
+        return ",".join(hw_ids), gpu_vendor_id
 
-    hw_ids_str = ",".join(hw_ids)
-    vendor_id = (selected_gpu["path"] / "vendor").read_text().strip()
-    return hw_ids_str, selected_gpu["bdf"], vendor_id
+    def _create_vfio_modprobe_conf(self, hw_ids: str, gpu_vendor: str):
+        """Creates or overwrites the /etc/modprobe.d/vfio.conf file."""
+        utils.info(f"Creating VFIO modprobe configuration at {self.VFIO_CONF_PATH}...")
+        
+        softdeps = {"0x10de": "nvidia nouveau", "0x1002": "amdgpu radeon", "0x8086": "i915"}
+        
+        # Build the list of lines for the new file content.
+        content_lines = [
+            f"options vfio-pci ids={hw_ids} disable_vga=1\n"
+        ]
+        
+        drivers = softdeps.get(gpu_vendor, "").split()
+        for driver in drivers:
+            content_lines.append(f"softdep {driver} pre: vfio-pci\n")
 
+        # Use the low-level helper to write the new file content directly.
+        utils._write_privileged_file(self.VFIO_CONF_PATH, content_lines)
+        utils.info(f"Successfully updated configuration in {self.VFIO_CONF_PATH}")
 
-def _create_vfio_conf(hw_ids: str, vendor_id: str):
-    """Creates an advanced vfio.conf with soft dependencies."""
-    utils.info("Creating VFIO modprobe configuration...")
-    softdeps = {"0x10de": "nvidia,nouveau", "0x1002": "amdgpu,radeon", "0x8086": "i915"}
-    lines = [f"options vfio-pci ids={hw_ids} disable_vga=1"]
-    drivers = softdeps.get(vendor_id, "").split(",")
-    for driver in drivers:
-        if driver:
-            lines.append(f"softdep {driver} pre: vfio-pci")
-    utils.update_config_file(
-        str(VFIO_CONF_PATH), ".*", "\n".join(lines), append_if_missing=True
-    )
-    utils.log(f"Created/updated {VFIO_CONF_PATH}")
+    @staticmethod
+    def _get_updated_kernel_opts(current_opts: str, new_opts: str, is_revert: bool) -> str:
+        """Strips all old VFIO options and adds new ones if not reverting."""
+        # Remove all known VFIO options from the current options string.
+        cleaned_opts = VFIOSetup.VFIO_KERNEL_OPTS_REGEX.sub("", current_opts)
+        # Clean up any resulting extra whitespace.
+        final_opts = " ".join(cleaned_opts.split())
 
+        if not is_revert:
+            final_opts = f"{final_opts} {new_opts}".strip()
 
-def _get_updated_opts_string(
-    current_opts: str, new_opts_str: str, is_revert: bool
-) -> str:
-    """
-    Takes a string of kernel options, removes all old VFIO options, and adds
-    the new ones if not reverting. Returns the cleaned options string.
-    """
-    # 1. Remove all known VFIO options from the current options string.
-    cleaned_opts = re.sub(VFIO_KERNEL_OPTS_REGEX, "", current_opts)
-    # 2. Clean up any resulting extra whitespace.
-    cleaned_opts = " ".join(cleaned_opts.split())
-    # 3. If we are NOT reverting, add the new options to the end.
-    if not is_revert:
-        cleaned_opts += f" {new_opts_str}"
-    return cleaned_opts.strip()
+        return final_opts
 
+    def _update_bootloader(self, new_opts: str, is_revert: bool):
+        """Modifies the configuration file for the detected bootloader."""
+        utils.info(f"Modifying {self.bootloader_type} configuration...")
 
-def _modify_bootloader(
-    bootloader_type: str, config_path: Path, new_opts_str: str, is_revert: bool
-):
-    """Surgically adds or removes VFIO kernel parameters from bootloader configs."""
-    utils.info(f"Modifying {bootloader_type} configuration...")
-
-    if bootloader_type == "GRUB":
-        try:
-            content = _run_cmd(["sudo", "cat", str(config_path)])
+        if self.bootloader_type == "GRUB":
+            content = utils.run_command(["sudo", "cat", str(self.config_path)], Path.cwd(), capture_output=True).stdout
             lines = content.splitlines()
             for i, line in enumerate(lines):
                 if line.strip().startswith("GRUB_CMDLINE_LINUX_DEFAULT="):
                     match = re.search(r'="([^"]*)"', line)
-                    if match:
-                        current_opts = match.group(1)
-                        # Call the helper with ONLY the options string
-                        updated_opts = _get_updated_opts_string(
-                            current_opts, new_opts_str, is_revert
-                        )
-                        # Reconstruct the full line correctly
-                        lines[i] = f'GRUB_CMDLINE_LINUX_DEFAULT="{updated_opts}"'
-                    break
-            utils.update_config_file(
-                str(config_path), ".+", "\n".join(lines), append_if_missing=False
-            )
-        except Exception as e:
-            utils.fail(f"Failed to modify GRUB config: {e}")
+                    current_opts = match.group(1) if match else ""
+                    updated_opts = self._get_updated_kernel_opts(current_opts, new_opts, is_revert)
+                    lines[i] = f'GRUB_CMDLINE_LINUX_DEFAULT="{updated_opts}"'
+                    utils.update_config_file(self.config_path, r".*", "\n".join(lines))
+                    return
 
-    elif bootloader_type == "systemd-boot":
-        conf_files = list(config_path.glob("*.conf"))
-        for conf_file in conf_files:
-            try:
-                content = _run_cmd(["sudo", "cat", str(conf_file)])
+        elif self.bootloader_type == "systemd-boot":
+            for conf_file in self.config_path.glob("*.conf"):
+                content = utils.run_command(["sudo", "cat", str(conf_file)], Path.cwd(), capture_output=True).stdout
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
                     if line.strip().startswith("options"):
-                        # Extract the options string, which is everything after the first space
-                        parts = line.strip().split(" ", 1)
-                        current_opts = parts[1] if len(parts) > 1 else ""
-                        # Call the helper with ONLY the options string
-                        updated_opts = _get_updated_opts_string(
-                            current_opts, new_opts_str, is_revert
-                        )
-                        # Reconstruct the full line correctly
+                        current_opts = line.strip().split(" ", 1)[1] if " " in line else ""
+                        updated_opts = self._get_updated_kernel_opts(current_opts, new_opts, is_revert)
                         lines[i] = f"options {updated_opts}"
-                        break
-                utils.update_config_file(
-                    str(conf_file), ".+", "\n".join(lines), append_if_missing=False
-                )
-            except Exception as e:
-                utils.warn(f"Failed to modify {conf_file.name}: {e}")
+                        utils.update_config_file(conf_file, r".*", "\n".join(lines))
+                        utils.log(f"Updated {conf_file.name}")
+                        break  # Assume one 'options' line per file
 
+    @staticmethod
+    def _update_grub():
+        """Finds and runs the correct grub-mkconfig command."""
+        utils.info("Updating GRUB configuration...")
+        grub_cfg_paths = ["/boot/grub/grub.cfg", "/boot/grub2/grub.cfg"]
+        output_path = next((path for path in grub_cfg_paths if Path(path).exists()), None)
 
-def _rebuild_grub():
-    """Finds and runs the correct grub-mkconfig command."""
-    utils.info("Updating GRUB...")
-    for grub_cmd in ["update-grub", "grub-mkconfig", "grub2-mkconfig"]:
-        if shutil.which(grub_cmd):
-            output_path = ""
-            if grub_cmd != "update-grub":
-                if Path("/boot/grub/grub.cfg").exists():
-                    output_path = "/boot/grub/grub.cfg"
-                elif Path("/boot/grub2/grub.cfg").exists():
-                    output_path = "/boot/grub2/grub.cfg"
-                else:
-                    utils.fail("Cannot find grub.cfg path.")
-                    return
-            cmd = ["sudo", grub_cmd]
-            if output_path:
-                cmd.extend(["-o", output_path])
-            try:
-                subprocess.run(cmd, check=True, capture_output=True)
-                utils.log("GRUB configuration rebuilt successfully.")
+        for cmd_name in ["update-grub", "grub-mkconfig", "grub2-mkconfig"]:
+            if shutil.which(cmd_name):
+                cmd = ["sudo", cmd_name]
+                if cmd_name != "update-grub" and output_path:
+                    cmd.extend(["-o", output_path])
+
+                utils.run_command(cmd, Path.cwd(), show_spinner=True)
                 return
-            except subprocess.CalledProcessError as e:
-                utils.fail(f"Failed to rebuild GRUB config. Error: {e.stderr.decode()}")
-    utils.fail("No GRUB update command found.")
+        utils.fail("No GRUB update command (like grub-mkconfig) found.")
+
+    def _configure(self) -> bool:
+        """Main workflow for setting up VFIO."""
+        selection = self._select_gpu_and_validate_iommu()
+        if not selection:
+            return False  # User aborted or validation failed
+        hw_ids, gpu_vendor = selection
+
+        self._create_vfio_modprobe_conf(hw_ids, gpu_vendor)
+
+        kernel_opts = ["iommu=pt", f"vfio-pci.ids={hw_ids}", "kvm.ignore_msrs=1"]
+        if "GenuineIntel" in self.cpu_vendor:
+            kernel_opts.insert(0, "intel_iommu=on")
+
+        self._update_bootloader(" ".join(kernel_opts), is_revert=False)
+        return True
+
+    def _revert(self) -> bool:
+        """Main workflow for reverting VFIO."""
+        utils.info("Reverting VFIO configurations...")
+        if self.VFIO_CONF_PATH.exists():
+            utils.run_command(["sudo", "rm", "-f", str(self.VFIO_CONF_PATH)], Path.cwd())
+            utils.log(f"Removed {self.VFIO_CONF_PATH}")
+
+        self._update_bootloader("", is_revert=True)
+        return True
+
+    def run(self):
+        """Presents the main menu and orchestrates the selected action."""
+        changes_made = False
+
+        print(f"\n  {utils.Fore.YELLOW}[1] Configure GPU Passthrough (VFIO)")
+        print(f"  {utils.Fore.YELLOW}[2] Revert all VFIO configurations")
+        print(f"\n  {utils.Fore.RED}[0] Return to Main Menu")
+        choice = utils.quick_prompt("\nEnter choice [0-2]: ")
+
+        if choice == "1":
+            changes_made = self._configure()
+        elif choice == "2":
+            changes_made = self._revert()
+        elif choice == "0":
+            return
+        else:
+            utils.error("Invalid choice.")
+            return
+
+        if changes_made:
+            if self.bootloader_type == "GRUB":
+                if utils.yes_or_no("Bootloader configuration changed. Update GRUB now?"):
+                    self._update_grub()
+            utils.warn("A system reboot is required for all changes to take effect.")
 
 
 # ==============================================================================
-#  MAIN LOGIC FUNCTIONS
+# MODULE ENTRY POINT
 # ==============================================================================
 
+def main(cpu_vendor: str):
+    """
+    Main entry point for the GPU Passthrough setup module.
 
-def configure_vfio(boot_type, config_path, vendor_id):
-    """Main flow for setting up VFIO."""
-    hw_ids, _, gpu_vendor_id = _select_gpu_and_validate_iommu()
-    _create_vfio_conf(hw_ids, gpu_vendor_id)
-
-    # 1. Start with the base options required for everyone.
-    kernel_opts = ["iommu=pt", f"vfio-pci.ids={hw_ids}", "kvm.ignore_msrs=1"]
-
-    # 2. Conditionally add the Intel-specific option.
-    if "GenuineIntel" in vendor_id:
-        # Prepend the Intel option to the list.
-        kernel_opts.insert(0, "intel_iommu=on")
-
-    _modify_bootloader(boot_type, config_path, " ".join(kernel_opts), is_revert=False)
-    return True  # Indicates changes were made
-
-
-def revert_vfio(boot_type, config_path):
-    """Main flow for reverting VFIO."""
-    utils.info("Reverting VFIO configurations...")
-    if VFIO_CONF_PATH.exists():
-        subprocess.run(["sudo", "rm", "-f", str(VFIO_CONF_PATH)], check=True)
-        utils.log(f"Removed {VFIO_CONF_PATH}")
-    _modify_bootloader(boot_type, config_path, "", is_revert=True)
-    return True
-
-
-# ==============================================================================
-#  MAIN ENTRY POINT
-# ==============================================================================
-
-
-def main(vendor_id: str):
-    """Main entry point for the GPU Passthrough setup module."""
-    boot_type, config_path = _detect_bootloader()
-    if boot_type == "Unknown":
-        utils.fail("Cannot proceed without a recognized bootloader.")
-
-    changes_made = False
-    if utils.yes_or_no("Revert and remove existing GPU passthrough configurations?"):
-        changes_made = revert_vfio(boot_type, config_path) or changes_made
-
-    if utils.yes_or_no("Configure new GPU passthrough settings now?"):
-        changes_made = configure_vfio(boot_type, config_path, vendor_id) or changes_made
-
-    if changes_made and boot_type == "GRUB":
-        if utils.yes_or_no(
-            "Bootloader configuration was changed. Rebuild GRUB config now?"
-        ):
-            _rebuild_grub()
-            utils.warn("A reboot is required for all changes to take effect.")
-    elif changes_made:
-        utils.warn("A reboot is required for all changes to take effect.")
-
-    utils.info("GPU Passthrough module finished.")
+    Args:
+        cpu_vendor: The CPU vendor string from the host system.
+    """
+    utils.info("Starting GPU Passthrough (VFIO) setup...")
+    setup = VFIOSetup(cpu_vendor)
+    setup.run()
+    utils.log("GPU Passthrough setup process finished.")

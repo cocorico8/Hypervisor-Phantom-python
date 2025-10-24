@@ -9,4 +9,4 @@ def setup_test_logging():
     for all test files. By placing it in conftest.py, pytest makes it
     globally available.
     """
-    utils.setup_logging(log_path="test_logs")
+    utils.setup_logging(log_dir="test_logs")

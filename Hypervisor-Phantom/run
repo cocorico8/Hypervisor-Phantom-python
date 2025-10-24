@@ -39,7 +39,7 @@ if [ -n "$COMMAND" ]; then
             ;;
         test)
             echo "--- Running tests (pytest) ---"
-            uv run pytest -v "$@"
+            uv run pytest -v --ignore=src "$@"
             ;;
         check)
             echo "--- Running all quality checks ---"

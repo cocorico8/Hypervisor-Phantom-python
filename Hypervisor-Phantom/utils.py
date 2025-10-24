@@ -1,12 +1,30 @@
+#!/usr/bin/env python
+"""
+Core utilities module for the Hypervisor Phantom toolkit.
+
+This module provides a centralized set of functions for common tasks such as:
+- Colored logging to both console and file.
+- Robust execution of external shell commands with spinners.
+- Standardized user interaction prompts.
+- System-level operations like package installation and privileged file editing.
+- Helper functions for finding resources and generating data.
+
+Third-party dependencies:
+- colorama: For cross-platform colored terminal text.
+- getch: For cross-platform single-character input without requiring Enter.
+  (pip install colorama getch)
+"""
+
 import logging
 import os
 import random
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
-import re
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict, List, Optional, IO
 
 # Recommended third-party libraries for a better CLI experience
 try:
@@ -16,45 +34,39 @@ try:
     colorama.init(autoreset=True)
 except ImportError:
     print(
-        "Error: Required libraries not found. Please run 'pip install colorama getch'"
+        "Error: Required libraries not found. Please run 'pip install colorama getch'",
+        file=sys.stderr,
     )
     sys.exit(1)
 
 
 # ==============================================================================
-# 1. ANSI COLOR AND STYLE CONSTANTS (from formatter.sh)
+# 1. ANSI COLOR AND STYLE CONSTANTS
 # ==============================================================================
-# Using colorama's constants for better readability and cross-platform support
 class Style:
     RESET = colorama.Style.RESET_ALL
     BOLD = colorama.Style.BRIGHT
     DIM = colorama.Style.DIM
-    NORMAL = colorama.Style.NORMAL
 
 
 class Fore:
-    BLACK = colorama.Fore.BLACK
     RED = colorama.Fore.RED
     GREEN = colorama.Fore.GREEN
     YELLOW = colorama.Fore.YELLOW
-    BLUE = colorama.Fore.BLUE
-    MAGENTA = colorama.Fore.MAGENTA
     CYAN = colorama.Fore.CYAN
     WHITE = colorama.Fore.WHITE
-    RESET = colorama.Fore.RESET
 
 
 class Back:
     GREEN = colorama.Back.GREEN
-    RESET = colorama.Back.RESET
+    BLACK = colorama.Back.BLACK
 
 
+# ==============================================================================
+# 2. LOGGING
+# ==============================================================================
 # Global variable to hold the configured logger
 log_handler = None
-
-# ==============================================================================
-# 2. LOGGING AND FORMATTING (from debugger.sh and formatter.sh)
-# ==============================================================================
 
 
 class ConsoleFormatter(logging.Formatter):
@@ -69,358 +81,377 @@ class ConsoleFormatter(logging.Formatter):
         logging.CRITICAL: f"{Fore.RED}{Style.BOLD}[X] %(message)s{Style.RESET}",
     }
 
-    def format(self, record):
-        # A little hack to allow for two different INFO styles
-        if record.levelno == logging.INFO and hasattr(record, "style_cyan"):
-            log_fmt = self.FORMATS.get("INFO_CYAN")
-        else:
-            log_fmt = self.FORMATS.get(record.levelno)
-
+    def format(self, record: logging.LogRecord) -> str:
+        # Hack to allow for two different INFO styles via the 'extra' dict
+        style_key = "INFO_CYAN" if getattr(record, "style_cyan", False) else record.levelno
+        log_fmt = self.FORMATS.get(style_key, self.FORMATS[logging.INFO])
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
 
 
-def setup_logging(log_path: str = "logs") -> None:
-    """Initializes the logging system with separate formatters for file and console."""
+def setup_logging(log_dir: str = "logs") -> None:
+    """Initializes logging with separate formats for file and console."""
     global log_handler
     try:
-        os.makedirs(log_path, exist_ok=True)
-        # Use a more descriptive log file name
-        log_file = os.path.join(log_path, f"auto_hypervisor_{os.getpid()}.log")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = Path(log_dir) / f"auto_hypervisor_{os.getpid()}.log"
 
         log_handler = logging.getLogger("hypervisor_phantom")
         log_handler.setLevel(logging.DEBUG)
 
+        # Prevent duplicate handlers if this function is called more than once
         if log_handler.hasHandlers():
             log_handler.handlers.clear()
 
-        # File handler - plain text, no colors.
-        fh = logging.FileHandler(log_file)
+        # File handler (plain text, verbose)
+        fh = logging.FileHandler(log_file, encoding="utf-8")
         fh.setLevel(logging.DEBUG)
-        # This formatter is for the file, so it includes timestamp and level name.
         file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         fh.setFormatter(file_formatter)
         log_handler.addHandler(fh)
 
-        # Console handler - uses our custom color formatter.
+        # Console handler (colored, less verbose)
         ch = logging.StreamHandler()
         ch.setLevel(logging.INFO)
         ch.setFormatter(ConsoleFormatter())
         log_handler.addHandler(ch)
 
-    except Exception as ex:
-        print(f"Failed to create log directory or file: {ex}", file=sys.stderr)
+    except Exception as e:
+        print(f"Critical Error: Failed to initialize logging: {e}", file=sys.stderr)
         sys.exit(1)
 
 
-def log(message: str):
+# --- Logging Wrapper Functions ---
+def log(message: str) -> None:
     """Log a standard green [+] message."""
     if log_handler:
         log_handler.info(message)
 
 
-def info(message: str):
-    """Log a cyan [i] message."""
+def info(message: str) -> None:
+    """Log a cyan [i] informational message."""
     if log_handler:
-        # We pass an extra context to our custom formatter to trigger the cyan style.
         log_handler.info(message, extra={"style_cyan": True})
 
 
-def warn(message: str):
-    """Log a yellow [!] message."""
+def warn(message: str) -> None:
+    """Log a yellow [!] warning message."""
     if log_handler:
         log_handler.warning(message)
 
 
-def error(message: str):
-    """Log a red [-] message to stderr."""
+def error(message: str) -> None:
+    """Log a red [-] error message."""
     if log_handler:
         log_handler.error(message)
 
 
-def fatal(message: str):
-    """Log a bold red [X] message to stderr."""
+def fail(message: str, exit_code: int = 1) -> None:
+    """Log a bold red [X] fatal message and exit the script."""
     if log_handler:
         log_handler.critical(message)
+    sys.exit(exit_code)
 
 
-def box_text(text: str):
-    """Draws a stylized box around given text."""
-    # We need to access the Style constants for this to work.
-    # Make sure the Style class is defined at the top of the file.
+# ==============================================================================
+# 3. COMMAND EXECUTION
+# ==============================================================================
+class CommandExecutionError(Exception):
+    """Custom exception for failed subprocess commands."""
+
+    def __init__(self, message, return_code, stdout, stderr):
+        super().__init__(message)
+        self.return_code = return_code
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def run_command(
+    command: List[str],
+    cwd: Path,
+    *,
+    show_spinner: bool = False,
+    capture_output: bool = False,
+    check: bool = True,
+    env: Optional[Dict[str, str]] = None,
+    stdin: Optional[IO] = None,
+) -> subprocess.CompletedProcess:
+    """
+    Runs an external command with enhanced logging, error handling, and UI.
+
+    Args:
+        command: The command to execute as a list of strings.
+        cwd: The working directory for the command.
+        show_spinner: If True, show start/end messages and pipe output to the
+                      debug log. Mutually exclusive with capture_output.
+        capture_output: If True, capture and return stdout/stderr.
+        check: If True, raise CommandExecutionError on non-zero exit codes.
+        env: Optional dictionary of environment variables.
+
+    Returns:
+        A CompletedProcess object with stdout, stderr, and returncode.
+
+    Raises:
+        CommandExecutionError: If the command fails and `check` is True.
+    """
+    cmd_str = shlex.join(command)
+    log_handler.debug(f"Executing in '{cwd}': {cmd_str}")
+
+    if show_spinner and capture_output:
+        raise ValueError("show_spinner and capture_output are mutually exclusive.")
+
+    if show_spinner:
+        info(f"Running: {command[0]}...")
+        log("This may take a while. Full output is in the log file.")
+        stdout_pipe, stderr_pipe = subprocess.PIPE, subprocess.STDOUT
+    elif capture_output:
+        stdout_pipe, stderr_pipe = subprocess.PIPE, subprocess.PIPE
+    else: # Stream directly to console
+        stdout_pipe, stderr_pipe = None, None
+        
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdout=stdout_pipe,
+            stderr=stderr_pipe,
+            stdin=stdin,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+        stdout, stderr = "", ""
+        if show_spinner:
+            # Stream output to the debug log in real-time
+            for line in iter(process.stdout.readline, ""):
+                log_handler.debug(line.strip())
+            process.wait()
+            # After finishing, read any remaining stderr (should be none with STDOUT redirect)
+            _, stderr = process.communicate()
+        else:
+            stdout, stderr = process.communicate()
+
+        if check and process.returncode != 0:
+            raise CommandExecutionError(
+                f"Command failed with exit code {process.returncode}",
+                process.returncode,
+                stdout,
+                stderr,
+            )
+            
+        if show_spinner:
+            log(f"'{command[0]}' completed successfully.")
+
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+    except FileNotFoundError:
+        raise CommandExecutionError(f"Command not found: {command[0]}", -1, "", "")
+    except Exception as e:
+        if isinstance(e, CommandExecutionError):
+             fail(f"{str(e)}. See log for details.")
+        fail(f"An unexpected error occurred running command: {e}")
+
+
+# ==============================================================================
+# 4. USER INTERACTION
+# ==============================================================================
+def box_text(text: str) -> None:
+    """Draws a stylized box around the given text."""
     width = len(text) + 2
     print(f"\n  {Style.BOLD}╔{'═' * width}╗")
     print(f"  ║ {text} ║")
     print(f"  ╚{'═' * width}╝\n{Style.RESET}")
 
 
-def fail(message: str):
-    """Prints a fatal message and exits the script."""
-    fatal(message)  # This calls our new logging wrapper
-    sys.exit(1)
-
-
-def run_with_spinner(command: list[str], cwd: Path, env: dict = None):
-    """
-    Runs a long-running command, providing simple start/end messages to the console
-    while streaming all detailed output to the debug log file.
-    """
-    cmd_str = " ".join(command)
-    info(f"Running command: {cmd_str}")
-    log("This may take a while. Full output is in the log file.")
-
-    try:
-        # We use Popen to stream the output in real-time
-        process = subprocess.Popen(
-            command,
-            cwd=cwd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        )
-
-        # Read the output line-by-line and send it to the debug log
-        if log_handler:
-            for line in iter(process.stdout.readline, ""):
-                log_handler.debug(line.strip())
-
-        # Wait for the process to complete
-        return_code = process.wait()
-
-        if return_code != 0:
-            # The error message is already in the log. Fail with a clear message.
-            fail(
-                f"Command failed with exit code {return_code}. Check the log for details."
-            )
-
-        log("Command completed successfully.")
-
-    except Exception as ex:
-        fail(f"An unexpected error occurred while running command: {ex}")
-
-
-# ==============================================================================
-# 3. USER PROMPTS (from prompter.sh)
-# ==============================================================================
-
-
 def ask(question: str) -> str:
-    """Displays a stylized question prompt."""
-    prompt = f"\n  {Back.GREEN}{Fore.BLACK}{Style.BOLD}[?] {question}{Style.RESET} "
-    log_handler.info(f"[?] Asking user: {question}")  # Log the question
-    return input(prompt)
+    """Displays a stylized question prompt and returns the user's input."""
+    prompt = f"\n  {Back.GREEN}{Back.BLACK}{Style.BOLD}[?] {question}{Style.RESET} "
+    log_handler.debug(f"Asking user: '{question}'")
+    response = input(prompt)
+    log_handler.debug(f"User response: '{response}'")
+    return response
 
 
 def yes_or_no(question: str) -> bool:
     """Asks a yes/no question and returns True for yes, False for no."""
+    prompt = f"\n  {Back.GREEN}{Back.BLACK}{Style.BOLD}[?] {question}{Style.RESET} [y/n]: "
+    log_handler.debug(f"Asking user (y/n): '{question}'")
     while True:
-        # The prompt for the user's input
-        prompt = f"\n  {Back.GREEN}{Fore.BLACK}{Style.BOLD}[?] {question}{Style.RESET} [y/n]: "
-
-        log_handler.debug(f"[?] Asking user (y/n): {question}")
-
         answer = input(prompt).lower().strip()
-
-        # Log the user's raw answer for debugging purposes
-        log_handler.debug(f"User answered: {answer}")
-
+        log_handler.debug(f"User answered: '{answer}'")
         if answer.startswith("y"):
             print()
             return True
-        elif answer.startswith("n"):
+        if answer.startswith("n"):
             print()
             return False
-        else:
-            error("Please answer y/n.")
+        error("Invalid input. Please answer with 'y' or 'n'.")
+
 
 
 def quick_prompt(prompt: str) -> str:
     """
-    Prompts the user and captures a single keypress.
-    This version correctly handles Ctrl+C to prevent tracebacks.
+    Prompts the user and captures a single keypress without needing Enter.
+    This version is hardened against errors from special keys (e.g., arrows, Del).
     """
     print(prompt, end="", flush=True)
     try:
-        # We wrap the potentially buggy function call in a try block
+        # getch() returns a string for normal keys, but can raise errors
+        # or return multi-byte strings for special keys. We only want single chars.
         response = getch()
-        print()  # Move to the next line only if a key was actually pressed
-        log_handler.info(f"User pressed a key for quick_prompt: '{response}'")
+        
+        # We are only interested in single, simple characters.
+        # Escape sequences for special keys are often multi-character strings.
+        # This check filters them out.
+        if len(response) > 1:
+            print() # Move to a new line for clean output
+            log_handler.debug(f"User pressed a special key sequence: {response!r}")
+            return "" # Treat as invalid input
+
+        print() # Move to a new line
+        log_handler.debug(f"User pressed key for quick_prompt: '{response}'")
         return response
-    except KeyboardInterrupt:
-        # If Ctrl+C is pressed, we catch it here and exit cleanly.
-        print()  # Move to a new line for a clean exit
-        fail("Operation cancelled by user.")
-    except Exception:
-        # Catch any other weird error from getch() like OverflowError
+
+    except OverflowError:
+        # This specific error is raised by getch for some special keys (like arrow keys).
         print()
-        fail("An error occurred reading user input.")
+        log_handler.debug("User pressed a special key that caused an OverflowError.")
+        return "" # Treat as invalid input
+
+    except (KeyboardInterrupt, EOFError):
+        # This catches Ctrl+C or Ctrl+D cleanly.
+        print()
+        fail("Operation cancelled by user.")
 
 
 # ==============================================================================
-# 4. PACKAGE MANAGEMENT (from packages.sh)
+# 5. SYSTEM AND FILE OPERATIONS
 # ==============================================================================
-
-# This dictionary replaces the large case statement in the bash script.
-# It's much cleaner and easier to extend.
 PKG_MANAGERS: Dict[str, Dict[str, str]] = {
-    "Arch": {
-        "install": "sudo pacman -S --noconfirm",
-        "check": "pacman -Q",
-    },
-    "Debian": {
-        "install": "sudo apt-get install -y",
-        "check": "dpkg -s",
-    },
-    "openSUSE": {
-        "install": "sudo zypper install -y",
-        "check": "rpm -q",
-    },
-    "Fedora": {
-        "install": "sudo dnf install -yq",
-        "check": "rpm -q",
-    },
+    "Arch": {"install": "sudo pacman -S --noconfirm", "check": "pacman -Q"},
+    "Debian": {"install": "sudo apt-get install -y", "check": "dpkg -s"},
+    "openSUSE": {"install": "sudo zypper install -y", "check": "rpm -q"},
+    "Fedora": {"install": "sudo dnf install -yq", "check": "rpm -q"},
 }
 
 
-def install_required_packages(
-    component: str, required_packages: List[str], distro: str
-):
-    """
-    Checks for and installs missing packages for a given component.
-    """
+def install_required_packages(component: str, packages: List[str], distro: str) -> None:
+    """Checks for and installs missing packages for a given component."""
     if distro not in PKG_MANAGERS:
         fail(f"Unsupported distribution for package management: {distro}")
 
     manager = PKG_MANAGERS[distro]
-    check_cmd = manager["check"].split()
-    install_cmd = manager["install"].split()
+    check_cmd = shlex.split(manager["check"])
+    install_cmd = shlex.split(manager["install"])
+    
+    log(f"Checking '{component}' packages for {distro}...")
+    missing = [
+        pkg
+        for pkg in packages
+        if run_command(check_cmd + [pkg], Path.cwd(), check=False).returncode != 0
+    ]
 
-    log(f"Checking for required '{component}' packages for {distro}...")
-
-    missing_packages = []
-    for pkg in required_packages:
-        # We expect a non-zero exit code if the package is NOT installed.
-        result = subprocess.run(check_cmd + [pkg], capture_output=True, text=True)
-        if result.returncode != 0:
-            missing_packages.append(pkg)
-
-    if not missing_packages:
+    if not missing:
         log(f"All required '{component}' packages are already installed.")
         return
 
-    warn(f"Missing required packages: {', '.join(missing_packages)}")
-
-    if yes_or_no(f"Install these {len(missing_packages)} missing packages?"):
-        info("Installing packages... See log file for details.")
-        try:
-            run_with_spinner(install_cmd + missing_packages, cwd=Path.cwd())
-            log("Packages installed successfully.")
-        except Exception as ex:
-            fail(f"An error occurred during installation: {ex}")
+    warn(f"Missing packages: {', '.join(missing)}")
+    if yes_or_no(f"Install these {len(missing)} missing packages?"):
+        run_command(install_cmd + missing, Path.cwd(), show_spinner=True)
+        log("Packages installed successfully.")
     else:
-        fail("User chose not to install required packages. Aborting.")
+        fail("User declined to install required packages. Aborting.")
+
+
+def _read_privileged_file(file_path: Path) -> List[str]:
+    """Helper to read a root-owned file using sudo."""
+    try:
+        result = run_command(["sudo", "cat", str(file_path)], Path.cwd(), capture_output=True)
+        return result.stdout.splitlines(True)
+    except CommandExecutionError:
+        warn(f"Could not read '{file_path}' (it may not exist). A new file will be created.")
+        return []
+
+
+def _write_privileged_file(file_path: Path, content_lines: List[str]) -> None:
+    """Helper to write to a root-owned file using a temporary file."""
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.writelines(content_lines)
+        
+        # Atomically move and set permissions
+        run_command(["sudo", "chown", "root:root", str(tmp_path)], Path.cwd())
+        run_command(["sudo", "chmod", "644", str(tmp_path)], Path.cwd())
+        run_command(["sudo", "mv", str(tmp_path), str(file_path)], Path.cwd())
+    finally:
+        if 'tmp_path' in locals() and tmp_path.exists():
+            tmp_path.unlink()
 
 
 def update_config_file(
-    file_path: str, pattern: str, new_line: str, append_if_missing: bool = False
-):
+    file_path: Path,
+    pattern: str,
+    new_line: str,
+    *,
+    append_if_missing: bool = False,
+) -> None:
     """
-    Safely edits a root-owned file by using sudo to read the original content,
-    modifying it in memory, and using sudo to write it back.
+    Safely edits a root-owned file using sudo.
+
+    It reads the file, finds a line matching the regex pattern, replaces it,
+    and writes the content back.
+
+    Args:
+        file_path: The absolute path to the configuration file.
+        pattern: A regex string to find the line to replace.
+        new_line: The new content for the line (without newline character).
+        append_if_missing: If True and pattern is not found, append new_line.
     """
-
-    def _read_as_root(path):
-        """Helper function to read a file and its stats using sudo."""
-        try:
-            stat_cmd = ["sudo", "stat", "-c", "%u %g %a", path]
-            stat_res = subprocess.run(
-                stat_cmd, check=True, capture_output=True, text=True
-            )
-            uid, gid, perms = stat_res.stdout.strip().split()
-
-            cat_cmd = ["sudo", "cat", path]
-            cat_res = subprocess.run(
-                cat_cmd, check=True, capture_output=True, text=True
-            )
-            content_lines = cat_res.stdout.splitlines(True)
-
-            return content_lines, uid, gid, perms
-        except subprocess.CalledProcessError:
-            warn(
-                f"Could not read '{path}' (it may not exist). A new one will be created."
-            )
-            return [], "0", "0", "644"  # Default to root:root, rw-r--r--
-
-    def _write_as_root(path, content_lines, uid, gid, perms):
-        """Helper function to write content to a file using sudo."""
-        temp_file = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", delete=False, encoding="utf-8"
-            ) as temp:
-                temp_file = temp.name
-                temp.writelines(content_lines)
-
-            log(f"Applying changes to {path} with root privileges...")
-            subprocess.run(["sudo", "mv", temp_file, path], check=True)
-            subprocess.run(["sudo", "chown", f"{uid}:{gid}", path], check=True)
-            subprocess.run(["sudo", "chmod", perms, path], check=True)
-        finally:
-            # Clean up the temp file even if an error occurs
-            if temp_file and os.path.exists(temp_file):
-                os.remove(temp_file)
-
-    try:
-        # STEP 1: Read the file and its metadata (as root).
-        original_lines, owner_uid, owner_gid, permissions = _read_as_root(file_path)
-
-        # STEP 2: Process the content in memory (as the user).
-        found = False
-        output_lines = []
-        for line in original_lines:
-            if re.search(pattern, line.strip()):
-                output_lines.append(new_line + "\n")
-                found = True
-            else:
-                output_lines.append(line)
-
-        if not found and append_if_missing:
+    original_lines = _read_privileged_file(file_path)
+    
+    found = False
+    output_lines = []
+    for line in original_lines:
+        # Search the stripped line to avoid issues with leading whitespace
+        if re.search(pattern, line.strip()):
             output_lines.append(new_line + "\n")
+            found = True
+        else:
+            output_lines.append(line)
 
-        # STEP 3: Write the new content back (as root).
-        _write_as_root(file_path, output_lines, owner_uid, owner_gid, permissions)
+    if not found and append_if_missing:
+        # Ensure the new line has a newline character if it's the last one
+        if not new_line.endswith('\n'):
+             new_line += '\n'
+        output_lines.append(new_line)
 
-        info(f"Successfully updated configuration in {file_path}")
-
-    except Exception as ex:
-        error(f"An unexpected failure occurred while updating {file_path}: {ex}")
+    _write_privileged_file(file_path, output_lines)
+    info(f"Successfully updated configuration in {file_path}")
 
 
 def get_resource_path(relative_path: str) -> Path:
     """
-    Get the absolute path to a resource.
-    Works correctly for both running from source and as a frozen (PyInstaller/Nuitka) executable.
+    Gets the absolute path to a resource, working for both source and frozen
+    (e.g., PyInstaller) executables.
     """
-    # Check if the application is running in a bundled state (e.g., PyInstaller)
+    # If the application is running in a bundled state (e.g., PyInstaller)
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        # If so, the base path is the temporary directory PyInstaller creates
+        # The base path is the temporary directory PyInstaller creates
         base_path = Path(sys._MEIPASS)
     else:
-        # If not, the base path is the directory containing the script files.
-        # We use __file__ which points to utils.py, and then get its parent directory.
+        # Otherwise, the base path is the directory containing this script
         base_path = Path(__file__).parent.resolve()
 
     return base_path / relative_path
 
 
-def generate_random_mac():
+def generate_random_mac() -> str:
     """Generates a random, locally-administered, unicast MAC address."""
-    # 0x02 sets the locally administered bit
-    mac_bytes = [
+    # 0x02 sets the locally administered bit in the first octet
+    mac = [
         0x02,
         random.randint(0x00, 0xFF),
         random.randint(0x00, 0xFF),
@@ -428,13 +459,13 @@ def generate_random_mac():
         random.randint(0x00, 0xFF),
         random.randint(0x00, 0xFF),
     ]
-    return ":".join(f"{b:02x}" for b in mac_bytes)
+    return ":".join(f"{b:02x}" for b in mac)
 
 
+# ==============================================================================
+# 6. DEMONSTRATION
+# ==============================================================================
 if __name__ == "__main__":
-    # ==========================================================================
-    # DEMONSTRATION of how to use the utility functions
-    # ==========================================================================
     setup_logging()
 
     box_text("Utility Module Demonstration")
@@ -444,30 +475,27 @@ if __name__ == "__main__":
     warn("This is a warning message.")
     error("This is an error message.")
 
+    info("Demonstrating command execution...")
     try:
-        user_response = ask("What is your favorite Linux distro?")
-        info(f"User's favorite distro is: {user_response}")
+        # Spinner example
+        run_command(["sleep", "2"], cwd=Path.cwd(), show_spinner=True)
+        # Capture example
+        result = run_command(["ls", "-l", "/"], cwd=Path.cwd(), capture_output=True)
+        log(f"Captured 'ls' output (first 50 chars): {result.stdout[:50].strip()}...")
+        # Failure example
+        run_command(["command-that-does-not-exist"], cwd=Path.cwd())
 
-        if yes_or_no("Do you like Python?"):
-            log("Great choice!")
-        else:
-            warn("You should give it another try!")
-
-        quick_prompt(info("Press any key to continue to the package manager demo..."))
-
-        # --- Package Manager Demo ---
-        # In a real script, this data would come from the specific module
-        # (e.g., qemu_patcher.py)
-        detected_distro = "Arch"  # Hardcoded for demonstration
-        qemu_packages_arch = ["base-devel", "ninja", "glib2", "nonexistent-package"]
-
-        info(f"Demonstrating package installation for Distro: {detected_distro}")
-        install_required_packages("QEMU", qemu_packages_arch, detected_distro)
-
-    except KeyboardInterrupt:
-        print("\n")
-        fail("Operation cancelled by user.")
+    except CommandExecutionError as e:
+        error(f"Caught expected command failure: {e.message}")
     except Exception as e:
-        fail(f"An unexpected error occurred: {e}")
+        fail(f"Caught unexpected error: {e}")
 
-    log("Demonstration finished.")
+    user_response = ask("What is your name?")
+    log(f"User's name is: {user_response}")
+
+    if yes_or_no("Do you like this new utils module?"):
+        log("Excellent!")
+    else:
+        warn("Feedback is welcome!")
+
+    fail("Demonstration finished successfully.", exit_code=0)

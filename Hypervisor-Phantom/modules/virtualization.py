@@ -1,162 +1,206 @@
-import os
-import subprocess
-import re
+"""
+Module for setting up the host system's virtualization environment.
+
+This module handles:
+1. Installing required packages (libvirt, QEMU, virt-manager, etc.) for the host OS.
+2. Performing distribution-specific configurations (e.g., Arch Linux firewall setup).
+3. Configuring libvirt and QEMU permissions and user settings.
+4. Adding the user to the necessary user groups (`libvirt`, `kvm`).
+5. Enabling and starting essential libvirt services and networks.
+"""
+
 import getpass
+import os
+from pathlib import Path
+
+# Import our custom utility functions
 import utils
+from config import packages, paths
 
 # ==============================================================================
-#  PACKAGE DEFINITIONS
+# MAIN CLASS
 # ==============================================================================
 
-REQUIRED_PACKAGES = {
-    "Arch": ["qemu-base", "edk2-ovmf", "libvirt", "dnsmasq", "virt-manager", "swtpm"],
-    "Debian": [
-        "qemu-system-x86",
-        "ovmf",
-        "virt-manager",
-        "libvirt-clients",
-        "swtpm",
-        "libvirt-daemon-system",
-        "libvirt-daemon-config-network",
-    ],
-    "openSUSE": [
-        "libvirt",
-        "libvirt-client",
-        "libvirt-daemon",
-        "virt-manager",
-        "qemu",
-        "qemu-kvm",
-        "ovmf",
-        "qemu-tools",
-        "swtpm",
-    ],
-    "Fedora": ["@virtualization", "swtpm"],
-}
+class VirtualizationSetup:
+    """Orchestrates the setup of host virtualization packages and services."""
 
-# ==============================================================================
-#  HELPER FUNCTIONS
-# ==============================================================================
+    def __init__(self, distro: str):
+        """
+        Initializes the setup process.
 
+        Args:
+            distro: The name of the detected Linux distribution.
+        """
+        if distro not in packages.VIRTUALIZATION:
+            utils.fail(f"Virtualization setup is not supported for distro: {distro}")
 
-def run_command(command: list[str], check=False) -> subprocess.CompletedProcess:
-    """A wrapper for running subprocesses and logging their output."""
-    utils.log(f"Running command: {' '.join(command)}")
-    return subprocess.run(command, capture_output=True, text=True, check=check)
+        self.distro = distro
+        self.user = self._get_original_user()
 
+        # Define configuration paths
+        self.LIBVIRTD_CONF = paths.LIBVIRTD_CONF
+        self.QEMU_CONF = paths.QEMU_LIBVIRT_CONF
 
-def _configure_firewall_arch():
-    """Performs Arch Linux specific firewall configuration for libvirt."""
-    utils.info("Running Arch-specific firewall configuration...")
+    @staticmethod
+    def _get_original_user() -> str:
+        """
+        Safely determines the original user who invoked sudo.
 
-    if run_command(["pacman", "-Qs", "iptables-nft"]).returncode == 0:
-        utils.log(
-            "iptables-nft detected. Configuring for iptables compatibility layer."
-        )
+        Returns:
+            The username of the original user.
+        """
+        user = os.environ.get("SUDO_USER")
+        if not user or user == "root":
+            utils.fail(
+                "Cannot determine the original user. "
+                "Please run this script from a standard user account using 'sudo'."
+            )
+        utils.info(f"Configuring system for user: {user}")
+        return user
+
+    def _install_packages(self):
+        """Installs the necessary virtualization packages for the host distro."""
+        virt_packages = packages.VIRTUALIZATION[self.distro]
+        utils.install_required_packages("Virtualization", virt_packages, self.distro)
+
+    def _configure_firewall(self):
+        """Performs distribution-specific firewall configuration."""
+        if self.distro == "Arch":
+            self._configure_arch_firewall()
+        else:
+            utils.info(f"No specific firewall configuration needed for {self.distro}.")
+
+    def _configure_arch_firewall(self):
+        """Handles Arch Linux specific firewall setup for libvirt."""
+        utils.info("Running Arch-specific firewall configuration...")
+
+        # Check for iptables-nft compatibility package
+        if utils.run_command(["pacman", "-Qs", "iptables-nft"], Path.cwd(), check=False).returncode == 0:
+            self._handle_iptables_nft()
+        # Check for legacy iptables
+        elif utils.run_command(["pacman", "-Qs", "iptables"], Path.cwd(), check=False).returncode == 0:
+            self._handle_legacy_iptables()
+        # Check for standalone nftables
+        elif utils.run_command(["pacman", "-Qs", "nftables"], Path.cwd(), check=False).returncode == 0:
+            self._handle_nftables()
+        else:
+            utils.error("No supported firewall implementation (iptables/nftables) found.")
+
+    def _handle_iptables_nft(self):
+        """Configures for iptables-nft compatibility layer."""
+        utils.log("iptables-nft detected. Configuring libvirt for iptables backend.")
         utils.update_config_file(
-            "/etc/libvirt/network.conf",
+            self.LIBVIRTD_CONF,
             r"^#?\s*firewall_backend\s*=",
             'firewall_backend = "iptables"',
             append_if_missing=True,
         )
-        run_command(["sudo", "systemctl", "enable", "--now", "nftables.service"])
-        utils.info("nftables service enabled.")
+        utils.run_command(["sudo", "systemctl", "enable", "--now", "nftables.service"], Path.cwd())
+        utils.info("nftables.service enabled and started.")
 
-    elif run_command(["pacman", "-Qs", "iptables"]).returncode == 0:
+    @staticmethod
+    def _handle_legacy_iptables():
+        """Configures for legacy iptables and ensures ebtables is present."""
         utils.log("Legacy iptables detected.")
-        if run_command(["pacman", "-Qs", "ebtables"]).returncode != 0:
+        if utils.run_command(["pacman", "-Qs", "ebtables"], Path.cwd(), check=False).returncode != 0:
             utils.fail(
-                "The 'ebtables' AUR package is required for legacy iptables. "
+                "The 'ebtables' package is required for legacy iptables with libvirt. "
                 "Please install it manually (e.g., 'yay -S ebtables') and re-run."
             )
-        run_command(["sudo", "systemctl", "enable", "--now", "iptables.service"])
-        utils.info("iptables service enabled.")
+        utils.run_command(["sudo", "systemctl", "enable", "--now", "iptables.service"], Path.cwd())
+        utils.info("iptables.service enabled and started.")
 
-    elif run_command(["pacman", "-Qs", "nftables"]).returncode == 0:
-        utils.warn("Nftables without iptables compatibility isn't ideal for libvirt.")
-        utils.info("See: https://bbs.archlinux.org/viewtopic.php?id=284664")
-        run_command(["sudo", "systemctl", "enable", "--now", "nftables.service"])
-        utils.info("nftables service enabled.")
+    @staticmethod
+    def _handle_nftables():
+        """Warns about standalone nftables and enables the service."""
+        utils.warn("Standalone nftables without iptables compatibility is not ideal for libvirt.")
+        utils.info("For more info, see: https://wiki.archlinux.org/title/Libvirt#Firewall")
+        utils.run_command(["sudo", "systemctl", "enable", "--now", "nftables.service"], Path.cwd())
+        utils.info("nftables.service enabled and started.")
 
-    else:
-        utils.error(
-            "Unsupported firewall implementation. Manual configuration may be required."
+    def _edit_config_files(self):
+        """Modifies libvirt and QEMU configuration files for proper permissions."""
+        utils.info("Updating libvirt and QEMU configuration files...")
+        # Configure libvirt to use the 'libvirt' group
+        utils.update_config_file(
+            self.LIBVIRTD_CONF,
+            r"^#?unix_sock_group\s=",
+            'unix_sock_group = "libvirt"',
+            append_if_missing=True,
+        )
+        utils.update_config_file(
+            self.LIBVIRTD_CONF,
+            r"^#?\sunix_sock_rw_perms\s=",
+            'unix_sock_rw_perms = "0770"',
+            append_if_missing=True,
+        )
+        # Configure QEMU to run VMs as the user for better permissions
+        utils.update_config_file(
+            self.QEMU_CONF, r"^#?user\s=", f'user = "{self.user}"', append_if_missing=True
+        )
+        utils.update_config_file(
+            self.QEMU_CONF, r"^#?group\s=", f'group = "{self.user}"', append_if_missing=True
+        )
+
+    def _manage_user_groups(self):
+        """Adds the original user to the 'libvirt' and 'kvm' groups."""
+        utils.info(f"Managing group memberships for user '{self.user}'...")
+        for group in ["libvirt", "kvm"]:
+            try:
+                # Check if user is already a member
+                check_result = utils.run_command(["id", "-nG", self.user], Path.cwd(), capture_output=True)
+                if f" {group} " in f" {check_result.stdout.strip()} ":
+                    utils.log(f"User '{self.user}' is already in group '{group}'.")
+                else:
+                    utils.run_command(
+                        ["sudo", "usermod", "-aG", group, self.user], Path.cwd()
+                    )
+                    utils.info(f"Added user '{self.user}' to group '{group}'.")
+            except utils.CommandExecutionError:
+                utils.warn(f"Failed to add user to group '{group}'. This may require manual action.")
+
+    @staticmethod
+    def _manage_services():
+        """Enables and starts the libvirt service and default network."""
+        utils.info("Enabling and starting libvirt services...")
+        utils.run_command(["sudo", "systemctl", "enable", "--now", "libvirtd.service"], Path.cwd())
+        utils.info("Enabled and started libvirtd.service.")
+
+        # Check if the default network is active
+        net_info = utils.run_command(["sudo", "virsh", "net-info", "default"], Path.cwd(), check=False)
+        if net_info.returncode != 0 or "Active: no" in net_info.stdout:
+            utils.info("Default libvirt network is not active. Starting it now...")
+            utils.run_command(["sudo", "virsh", "net-start", "default"], Path.cwd())
+            utils.run_command(["sudo", "virsh", "net-autostart", "default"], Path.cwd())
+            utils.info("Started and enabled autostart for the default libvirt network.")
+        else:
+            utils.info("Default libvirt network is already active.")
+
+    def run(self):
+        """Executes the full virtualization setup workflow."""
+        self._install_packages()
+        self._configure_firewall()
+        self._edit_config_files()
+        self._manage_user_groups()
+        self._manage_services()
+
+        utils.warn(
+            "A system reboot is required for all group and service changes to take full effect."
         )
 
 
-def _configure_system_installation():
-    """Sets up libvirt/qemu configs, user groups, and services for all distros."""
-    utils.info("Configuring system for virtualization...")
-    libvirtd_conf = "/etc/libvirt/libvirtd.conf"
-    qemu_conf = "/etc/libvirt/qemu.conf"
-
-    current_user = os.environ.get("SUDO_USER", getpass.getuser())
-    if current_user == "root":
-        utils.fail(
-            "Cannot determine original user. Please run with 'sudo' from a user account."
-        )
-
-    utils.info(f"Configuring for user: {current_user}")
-
-    utils.update_config_file(
-        libvirtd_conf, r"^#?unix_sock_group\s*=", 'unix_sock_group = "libvirt"', True
-    )
-    utils.update_config_file(
-        libvirtd_conf, r"^#?unix_sock_rw_perms\s*=", 'unix_sock_rw_perms = "0770"', True
-    )
-    utils.update_config_file(
-        qemu_conf, r"^#?user\s*=", f'user = "{current_user}"', True
-    )
-    utils.update_config_file(
-        qemu_conf, r"^#?group\s*=", f'group = "{current_user}"', True
-    )
-
-    for group in ["kvm", "libvirt"]:
-        try:
-            groups_output = run_command(["id", "-nG", current_user], check=True).stdout
-            if re.search(r"\b" + group + r"\b", groups_output):
-                utils.info(f"User {current_user} is already in group '{group}'.")
-            else:
-                run_command(["sudo", "usermod", "-aG", group, current_user], check=True)
-                utils.info(f"Added user {current_user} to group '{group}'.")
-        except subprocess.CalledProcessError as e:
-            utils.error(f"Failed to add user to group {group}: {e.stderr}")
-
-    run_command(["sudo", "systemctl", "enable", "--now", "libvirtd.socket"])
-    utils.info("Enabled and started libvirtd.socket.")
-
-    if run_command(["sudo", "virsh", "net-info", "default"]).returncode != 0:
-        utils.info("Default libvirt network not active. Starting it...")
-        run_command(["sudo", "virsh", "net-autostart", "default"])
-        run_command(["sudo", "virsh", "net-start", "default"])
-        utils.info("Started and enabled default libvirt network.")
-    else:
-        utils.info("Default libvirt network is already active.")
-
-
 # ==============================================================================
-#  MAIN FUNCTION
+# MODULE ENTRY POINT
 # ==============================================================================
-
 
 def main(distro: str):
     """
     Main entry point for the virtualization setup module.
+
+    Args:
+        distro: The name of the detected Linux distribution.
     """
-    if distro not in REQUIRED_PACKAGES:
-        utils.fail(
-            f"Virtualization setup is not supported for the detected distro: {distro}"
-        )
-
-    packages_to_install = REQUIRED_PACKAGES[distro]
-    utils.install_required_packages("Virtualization", packages_to_install, distro)
-
-    if distro == "Arch":
-        _configure_firewall_arch()
-    else:
-        utils.info(f"No specific firewall configuration needed for {distro}.")
-
-    _configure_system_installation()
-
-    utils.warn(
-        "A logout/reboot is required for all group and service changes to take effect."
-    )
+    utils.info("Starting host virtualization setup...")
+    setup = VirtualizationSetup(distro)
+    setup.run()
+    utils.log("Host virtualization setup process finished.")

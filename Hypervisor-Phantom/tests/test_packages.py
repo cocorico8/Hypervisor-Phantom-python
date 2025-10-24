@@ -1,69 +1,70 @@
-import subprocess
+# tests/test_utils.py
 
-# Import the code we want to test
+import pytest
+import re
+from pathlib import Path
 import utils
 
+# Note: The setup_test_logging fixture in conftest.py already handles logging.
 
-# This is a mock object that simulates the result of a subprocess command.
-class MockCompletedProcess:
-    def __init__(self, returncode=0, stdout=""):
-        self.returncode = returncode
-        self.stdout = stdout
-
-
-# This is our mock function that will replace the real 'subprocess.run'.
-def mock_subprocess_run(installed_packages):
-    def _mock_run(command, *args, **kwargs):
-        package_name = command[-1]
-        if package_name in installed_packages:
-            # If the package is in our "installed" list, simulate success.
-            return MockCompletedProcess(returncode=0)
-        else:
-            # Otherwise, simulate failure (package not found).
-            return MockCompletedProcess(returncode=1)
-
-    return _mock_run
-
-
-def test_install_required_packages(monkeypatch):
+def test_generate_random_mac_format():
     """
-    Tests the package installation logic by mocking subprocess.run.
-    This allows us to test the function's logic without actually installing packages.
+    Tests that the generated MAC address has the correct format and prefix.
     """
-    print("--> Testing package installation logic...")
+    # Arrange
+    mac_regex = re.compile(r"^02(:[0-9a-f]{2}){5}$")
 
-    # We will simulate a system where 'git' is installed but 'make' is not.
-    already_installed = ["git"]
-    required = ["git", "make"]
+    # Act
+    mac = utils.generate_random_mac()
 
-    # This is the magic: we replace the real 'subprocess.run' with our mock function.
-    monkeypatch.setattr(subprocess, "run", mock_subprocess_run(already_installed))
+    # Assert
+    assert isinstance(mac, str)
+    assert len(mac) == 17
+    assert mac_regex.match(mac) is not None, f"MAC {mac} did not match expected format."
 
-    # We also need to mock the user input and the spinner function.
-    # Simulate the user always answering "y" to prompts.
-    monkeypatch.setattr(utils, "yes_or_no", lambda _: True)
-    # Replace the spinner with a simple function that does nothing, so it doesn't hang.
-    monkeypatch.setattr(utils, "run_with_spinner", lambda *args, **kwargs: None)
+@pytest.mark.parametrize("user_input, expected_result", [
+    ("y", True),
+    ("Y", True),
+    ("yes", True),
+    ("n", False),
+    ("N", False),
+    ("no", False),
+])
+def test_yes_or_no_handles_various_inputs(monkeypatch, user_input, expected_result):
+    """
+    Tests the yes_or_no prompt with various valid inputs using parameterization.
+    """
+    # Arrange
+    # Mock the built-in input() function to return the canned user_input
+    monkeypatch.setattr("builtins.input", lambda _: user_input)
 
-    # We need to capture the calls to our mocked spinner to see what would be installed.
-    # We'll use a list to track calls to our mock.
-    install_calls = []
+    # Act
+    result = utils.yes_or_no("A test question?")
 
-    def mock_spinner_capture(command, *args, **kwargs):
-        # When this mock is called, just record the command it was given.
-        install_calls.append(command)
+    # Assert
+    assert result is expected_result
 
-    monkeypatch.setattr(utils, "run_with_spinner", mock_spinner_capture)
+def test_update_config_file_replaces_line(monkeypatch):
+    """
+    Tests that update_config_file correctly replaces an existing line.
+    """
+    # Arrange
+    initial_content = ["# Some comment\n", "TARGET_KEY = old_value\n", "OTHER_KEY = 123\n"]
+    expected_content = ["# Some comment\n", "TARGET_KEY = new_value\n", "OTHER_KEY = 123\n"]
+    
+    # Mock the privileged file I/O functions in utils
+    # This is a list to track what _write_privileged_file was called with
+    write_calls = []
+    monkeypatch.setattr("utils._read_privileged_file", lambda path: initial_content)
+    monkeypatch.setattr("utils._write_privileged_file", lambda path, content: write_calls.append(content))
+    
+    # Act
+    utils.update_config_file(
+        file_path=Path("/fake/config.conf"),
+        pattern=r"^TARGET_KEY\s*=",
+        new_line="TARGET_KEY = new_value",
+    )
 
-    # Now, run the function we are testing.
-    utils.install_required_packages("Test Component", required, "Arch")
-
-    # Finally, assert that our logic worked correctly.
-    # There should be exactly one call to the installer.
-    assert len(install_calls) == 1
-
-    # The command should be to install 'make', since 'git' was already present.
-    install_command = install_calls[0]
-    assert "make" in install_command
-    assert "git" not in install_command
-    print("    - Correctly identified and attempted to install the missing package.")
+    # Assert
+    assert len(write_calls) == 1, "File should have been written to exactly once."
+    assert write_calls[0] == expected_content, "The new file content is incorrect."
