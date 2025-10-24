@@ -58,6 +58,7 @@ if [ -n "$COMMAND" ]; then
 else
     # --- Default Action: Launch the Application ---
     echo "🚀 Launching Hypervisor Phantom..."
+    echo "ℹ️  Requesting administrative privileges to manage system files and services."
     echo ""
-    ./$VENV_DIR/bin/python "$MAIN_SCRIPT"
+    sudo ./"$VENV_DIR"/bin/python "$MAIN_SCRIPT"
 fi

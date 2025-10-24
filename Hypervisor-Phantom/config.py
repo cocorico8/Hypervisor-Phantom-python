@@ -7,6 +7,7 @@ updates and maintenance become significantly easier.
 """
 
 from pathlib import Path
+import utils
 
 
 # ==============================================================================
@@ -17,7 +18,7 @@ class Core:
     LOG_DIR = "logs"
     SOURCE_DIR = Path("src")
     OUTPUT_DIR = Path("output")
-    RESOURCE_DIR = "resources"
+    RESOURCE_DIR = utils.get_resource_path("resources")
 
 
 # ==============================================================================
