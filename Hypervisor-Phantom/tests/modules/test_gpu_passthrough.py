@@ -116,14 +116,14 @@ def test_create_vfio_modprobe_conf(mock_write, vfio_setup_instance):
     ('GRUB_CMDLINE_LINUX_DEFAULT="quiet intel_iommu=on vfio-pci.ids=... splash"', "", True, 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"'),
     ('GRUB_CMDLINE_LINUX_DEFAULT="quiet amd_iommu=on"', "intel_iommu=on", False, 'GRUB_CMDLINE_LINUX_DEFAULT="quiet intel_iommu=on"'),
 ])
-@patch("utils.update_config_file")
+@patch("utils._write_privileged_file")
 @patch("utils.run_command")
-def test_update_bootloader_grub(mock_run_command, mock_update, vfio_setup_instance, current_opts, new_opts, is_revert, expected_opts):
+def test_update_bootloader_grub(mock_run_command, mock_write, vfio_setup_instance, current_opts, new_opts, is_revert, expected_opts):
     """
     Tests the logic for modifying the GRUB command line.
     """
     mock_run_command.return_value = MagicMock(stdout=current_opts)
     vfio_setup_instance._update_bootloader(new_opts, is_revert)
-    mock_update.assert_called_once()
-    updated_content = mock_update.call_args[0][2]
-    assert updated_content == expected_opts
+    mock_write.assert_called_once()
+    written_content = "".join(mock_write.call_args[0][1])
+    assert expected_opts in written_content

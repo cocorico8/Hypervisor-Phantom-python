@@ -61,21 +61,22 @@ def test_configure_tkg(mock_yes_no, mock_select, mock_read, mock_write, builder_
 
 @patch("pathlib.Path.mkdir")
 @patch("shutil.copy")
-@patch("utils.get_resource_path")
-def test_apply_custom_patches(mock_get_resource, mock_copy, mock_mkdir, builder_instance):
+def test_apply_custom_patches(mock_copy, mock_mkdir, builder_instance):
     """
     Ensures that the correct custom patch is copied to the userpatches directory.
     """
-    mock_source_path = MagicMock()
-    mock_source_path.exists.return_value = True
-    (mock_source_path / "amd614.mypatch").exists.return_value = True # Make the specific patch exist
-    mock_get_resource.return_value = mock_source_path
+    from config import paths, versions
+    
+    vendor_short = "amd" if "AuthenticAMD" in builder_instance.cpu_vendor else "intel"
+    patch_name = f"{vendor_short}{versions.KERNEL_MAJOR}{versions.KERNEL_MINOR}.mypatch"
+    patch_source = paths.KERNEL_PATCH_DIR / patch_name
 
-    builder_instance._apply_custom_patches()
+    with patch.object(Path, 'exists', return_value=True):
+        builder_instance._apply_custom_patches()
 
-    expected_dest_dir = builder_instance.tkg_path / "linux614-tkg-userpatches"
+    expected_dest_dir = builder_instance.tkg_path / f"linux{versions.KERNEL_MAJOR}{versions.KERNEL_MINOR}-tkg-userpatches"
     mock_mkdir.assert_called_once_with(exist_ok=True)
-    mock_copy.assert_called_once_with(mock_source_path / "amd614.mypatch", expected_dest_dir)
+    mock_copy.assert_called_once_with(patch_source, expected_dest_dir)
 
 
 @patch("utils.run_command")
@@ -85,8 +86,15 @@ def test_build_and_install_kernel_arch(mock_run_command, builder_instance):
     """
     builder_instance.distro = "Arch"
     builder_instance._build_and_install_kernel()
-    mock_run_command.assert_called_once()
-    command_list = mock_run_command.call_args[0][0]
+    
+    assert mock_run_command.call_count == 2
+    
+    chown_call = mock_run_command.call_args_list[0]
+    makepkg_call = mock_run_command.call_args_list[1]
+    
+    assert chown_call.args[0] == ["sudo", "chown", "-R", "testuser:testuser", "."]
+    
+    command_list = makepkg_call.args[0]
     assert command_list[:4] == ["sudo", "-u", "testuser", "makepkg"]
     assert "-si" in command_list
 

@@ -104,13 +104,15 @@ def test_manage_services_starts_inactive_network(mock_run_command):
     """
     mock_net_info = MagicMock(returncode=0, stdout="Active: no")
     mock_run_command.side_effect = [MagicMock(), mock_net_info, MagicMock(), MagicMock()]
+    
+    cwd = Path.cwd()
     virtualization.VirtualizationSetup._manage_services()
+    
     expected_calls = [
-        call(["sudo", "systemctl", "enable", "--now", "libvirtd.service"], ANY),
-        call(["sudo", "virsh", "net-info", "default"], ANY, check=False),
-        call(["sudo", "virsh", "net-start", "default"], ANY),
-        call(["sudo", "virsh", "net-autostart", "default"], ANY),
+        call(["sudo", "systemctl", "enable", "--now", "libvirtd.service"], cwd),
+        call(["sudo", "virsh", "net-info", "default"], cwd, check=False, capture_output=True),
+        call(["sudo", "virsh", "net-start", "default"], cwd),
+        call(["sudo", "virsh", "net-autostart", "default"], cwd),
     ]
-    # FIX: Check that the number of calls is correct.
     assert mock_run_command.call_count == 4
     mock_run_command.assert_has_calls(expected_calls)

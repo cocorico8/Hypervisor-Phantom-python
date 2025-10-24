@@ -110,4 +110,4 @@ def test_run_injection_constructs_correct_command(mock_gen_json, mock_run_comman
     assert "sudo" in command_list
     assert "virt-fw-vars" in command_list
     assert "--secure-boot" in command_list
-    assert command_list.count("--add-db") == 2
+    assert command_list.count("--add-db") == 5
