@@ -212,11 +212,15 @@ class CertInjector:
 
     # Certificate filenames and their download URLs
     CERT_URLS = {
-        "ms_pk.der": f"{urls.MS_SB_BASE}/PK/Microsoft_Corporation_UEFI_CA_2011.crt",
-        "ms_kek.der": f"{urls.MS_SB_BASE}/KEK/Microsoft_Corporation_KEK_CA_2011.crt",
-        "ms_db1.der": f"{urls.MS_SB_BASE}/db/Microsoft_Windows_Production_PCA_2011.crt",
-        "ms_db2.der": f"{urls.MS_SB_BASE}/db/Microsoft_Corporation_UEFI_CA_2011.crt",
-        "dbx_update.bin": f"{urls.MS_SB_BASE}/dbx/dbxupdate.bin",
+        "ms_pk.der": f"{urls.MS_SB_BASE}/PreSignedObjects/PK/Certificate/WindowsOEMDevicesPK.der",
+        "ms_kek1.der": f"{urls.MS_SB_BASE}/PreSignedObjects/KEK/Certificates/MicCorKEKCA2011_2011-06-24.der",
+        "ms_kek2.der": f"{urls.MS_SB_BASE}/PreSignedObjects/KEK/Certificates/microsoft%20corporation%20kek%202k%20ca%202023.der",
+        "ms_db1.der": f"{urls.MS_SB_BASE}/PreSignedObjects/DB/Certificates/MicCorUEFCA2011_2011-06-27.der",
+        "ms_db2.der": f"{urls.MS_SB_BASE}/PreSignedObjects/DB/Certificates/MicWinProPCA2011_2011-10-19.der",
+        "ms_db3.der": f"{urls.MS_SB_BASE}/PreSignedObjects/DB/Certificates/microsoft%20option%20rom%20uefi%20ca%202023.der",
+        "ms_db4.der": f"{urls.MS_SB_BASE}/PreSignedObjects/DB/Certificates/microsoft%20uefi%20ca%202023.der",
+        "ms_db5.der": f"{urls.MS_SB_BASE}/PreSignedObjects/DB/Certificates/windows%20uefi%20ca%202023.der",
+        "dbx_update.bin": f"{urls.MS_SB_BASE}/PostSignedObjects/DBX/amd64/DBXUpdate.bin",
     }
 
     # Standard Microsoft Owner GUID for Secure Boot variables
@@ -341,10 +345,14 @@ class CertInjector:
             # Platform Key (PK)
             "--set-pk", self.MS_OWNER_GUID, str(temp_dir / "ms_pk.der"),
             # Key Exchange Key (KEK)
-            "--add-kek", self.MS_OWNER_GUID, str(temp_dir / "ms_kek.der"),
+            "--add-kek", self.MS_OWNER_GUID, str(temp_dir / "ms_kek1.der"),
+            "--add-kek", self.MS_OWNER_GUID, str(temp_dir / "ms_kek2.der"),
             # Signature Database (db)
             "--add-db", self.MS_OWNER_GUID, str(temp_dir / "ms_db1.der"),
             "--add-db", self.MS_OWNER_GUID, str(temp_dir / "ms_db2.der"),
+            "--add-db", self.MS_OWNER_GUID, str(temp_dir / "ms_db3.der"),
+            "--add-db", self.MS_OWNER_GUID, str(temp_dir / "ms_db4.der"),
+            "--add-db", self.MS_OWNER_GUID, str(temp_dir / "ms_db5.der"),
             # Forbidden Signatures Database (dbx)
             "--set-dbx", str(temp_dir / "dbx_update.bin"),
         ]
