@@ -34,6 +34,14 @@ pluggy==1.6.0
     # via pytest
 pygments==2.19.2
     # via pytest
+pyside6==6.10.0
+    # via hypervisor-phantom (pyproject.toml)
+pyside6-addons==6.10.0
+    # via pyside6
+pyside6-essentials==6.10.0
+    # via
+    #   pyside6
+    #   pyside6-addons
 pytest==8.4.2
     # via hypervisor-phantom (pyproject.toml)
 pytokens==0.2.0
@@ -42,6 +50,11 @@ requests==2.32.5
     # via hypervisor-phantom (pyproject.toml)
 ruff==0.14.2
     # via hypervisor-phantom (pyproject.toml)
+shiboken6==6.10.0
+    # via
+    #   pyside6
+    #   pyside6-addons
+    #   pyside6-essentials
 urllib3==2.5.0
     # via requests
 zstandard==0.25.0
