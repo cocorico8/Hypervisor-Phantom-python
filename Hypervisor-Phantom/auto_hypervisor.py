@@ -171,7 +171,8 @@ class HypervisorPhantomApp:
         print_check("KVM Kernel Module", self.system_info.kvm_loaded)
         print(f"  ──────────────────────────────\n")
 
-    def _exit_app(self):
+    @staticmethod
+    def _exit_app():
         """Handles the application exit process."""
         if utils.yes_or_no("Clear the 'logs' directory before exiting?"):
             log_dir = Path("logs")

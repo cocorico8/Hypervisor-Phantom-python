@@ -159,27 +159,45 @@ class VFIOSetup:
         if self.bootloader_type == "GRUB":
             content = utils.run_command(["sudo", "cat", str(self.config_path)], Path.cwd(), capture_output=True).stdout
             lines = content.splitlines()
+            found = False
             for i, line in enumerate(lines):
                 if line.strip().startswith("GRUB_CMDLINE_LINUX_DEFAULT="):
-                    match = re.search(r'="([^"]*)"', line)
-                    current_opts = match.group(1) if match else ""
+                    # Robustly get current options, ignoring quotes
+                    parts = line.split('=', 1)
+                    if len(parts) > 1:
+                        # Strip whitespace first, then any surrounding quotes
+                        current_opts = parts[1].strip().strip('"\'')
+                    else:
+                        current_opts = ""
+
                     updated_opts = self._get_updated_kernel_opts(current_opts, new_opts, is_revert)
                     lines[i] = f'GRUB_CMDLINE_LINUX_DEFAULT="{updated_opts}"'
-                    utils.update_config_file(self.config_path, r".*", "\n".join(lines))
-                    return
+                    found = True
+                    break  # Found the line, no need to continue looping
+            
+            if found:
+                # Use the low-level writer, adding newlines back.
+                utils._write_privileged_file(self.config_path, [l + '\n' for l in lines])
+                utils.info(f"Successfully updated configuration in {self.config_path}")
 
         elif self.bootloader_type == "systemd-boot":
             for conf_file in self.config_path.glob("*.conf"):
                 content = utils.run_command(["sudo", "cat", str(conf_file)], Path.cwd(), capture_output=True).stdout
                 lines = content.splitlines()
+                found = False
                 for i, line in enumerate(lines):
                     if line.strip().startswith("options"):
+                        # This split logic is already correct.
                         current_opts = line.strip().split(" ", 1)[1] if " " in line else ""
                         updated_opts = self._get_updated_kernel_opts(current_opts, new_opts, is_revert)
                         lines[i] = f"options {updated_opts}"
-                        utils.update_config_file(conf_file, r".*", "\n".join(lines))
-                        utils.log(f"Updated {conf_file.name}")
+                        found = True
                         break  # Assume one 'options' line per file
+                
+                if found:
+                    # Use the correct low-level writer, adding newlines back.
+                    utils._write_privileged_file(conf_file, [l + '\n' for l in lines])
+                    utils.log(f"Updated {conf_file.name}")
 
     @staticmethod
     def _update_grub():

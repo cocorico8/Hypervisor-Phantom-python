@@ -167,7 +167,7 @@ class VirtualizationSetup:
         utils.info("Enabled and started libvirtd.service.")
 
         # Check if the default network is active
-        net_info = utils.run_command(["sudo", "virsh", "net-info", "default"], Path.cwd(), check=False)
+        net_info = utils.run_command(["sudo", "virsh", "net-info", "default"], Path.cwd(), check=False, capture_output=True)
         if net_info.returncode != 0 or "Active: no" in net_info.stdout:
             utils.info("Default libvirt network is not active. Starting it now...")
             utils.run_command(["sudo", "virsh", "net-start", "default"], Path.cwd())

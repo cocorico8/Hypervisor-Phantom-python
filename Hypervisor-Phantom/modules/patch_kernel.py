@@ -17,6 +17,7 @@ from typing import Dict, Tuple
 
 # Import our custom utility functions
 import utils
+from config import urls, versions, core, paths
 
 
 # ==============================================================================
@@ -27,11 +28,6 @@ class KernelBuilder:
     """Orchestrates the download, configuration, and build of a TKG kernel."""
 
     # --- Configuration Constants ---
-    TKG_URL = "https://github.com/Frogging-Family/linux-tkg.git"
-    TKG_DIR_NAME = "linux-tkg"
-    KERNEL_MAJOR = "6"
-    KERNEL_MINOR = "14"
-    KERNEL_PATCH = "latest"
     REQUIRED_DISK_SPACE_GB = 35
 
     # Locations to search for systemd-boot entries directory
@@ -51,9 +47,9 @@ class KernelBuilder:
         """
         self.distro = distro
         self.cpu_vendor = cpu_vendor
-        self.src_dir = Path("src")
-        self.tkg_path = self.src_dir / self.TKG_DIR_NAME
-        self.kernel_version = f"{self.KERNEL_MAJOR}.{self.KERNEL_MINOR}-{self.KERNEL_PATCH}"
+        self.src_dir = core.SOURCE_DIR
+        self.tkg_path = self.src_dir / "linux-tkg"
+        self.kernel_version = versions.KERNEL_FULL
 
     def _check_disk_space(self):
         """Checks for sufficient free disk space in the current directory."""
@@ -81,7 +77,7 @@ class KernelBuilder:
 
         utils.info("Cloning linux-tkg repository...")
         utils.run_command(
-            ["git", "clone", "--depth=1", self.TKG_URL, str(self.tkg_path)],
+            ["git", "clone", "--depth=1", urls.TKG_GIT, str(self.tkg_path)],
             cwd=Path.cwd(),
             show_spinner=True
         )
@@ -163,12 +159,12 @@ class KernelBuilder:
 
     def _apply_custom_patches(self):
         """Copies the custom kernel patch into the tkg userpatches directory."""
-        userpatches_dir = self.tkg_path / f"linux{self.KERNEL_MAJOR}{self.KERNEL_MINOR}-tkg-userpatches"
+        userpatches_dir = self.tkg_path / f"linux{versions.KERNEL_MAJOR}{versions.KERNEL_MINOR}-tkg-userpatches"
         userpatches_dir.mkdir(exist_ok=True)
 
         vendor_short = "amd" if "AuthenticAMD" in self.cpu_vendor else "intel"
-        patch_name = f"{vendor_short}{self.KERNEL_MAJOR}{self.KERNEL_MINOR}.mypatch"
-        patch_source = utils.get_resource_path("patches/Kernel") / patch_name
+        patch_name = f"{vendor_short}{versions.KERNEL_MAJOR}{versions.KERNEL_MINOR}.mypatch"
+        patch_source = paths.KERNEL_PATCH_DIR / patch_name
 
         if not patch_source.exists():
             utils.fail(f"Required kernel patch not found: {patch_source}")
@@ -187,10 +183,15 @@ class KernelBuilder:
                 if not original_user or original_user == 'root':
                     utils.fail("For Arch, this must be run via sudo from a normal user.")
 
+                # Change ownership of the build directory to the original user
+                utils.info(f"Changing ownership of '{self.tkg_path}' to '{original_user}'...")
+                chown_cmd = ["sudo", "chown", "-R", f"{original_user}:{original_user}", "."]
+                utils.run_command(chown_cmd, self.tkg_path)
+
                 utils.warn(f"Running 'makepkg' as user '{original_user}'. This is a security measure.")
                 # We can use our utils runner by wrapping the command in 'sudo -u'
                 cmd = ["sudo", "-u", original_user, "makepkg", "-si", "--noconfirm"]
-                utils.run_command(cmd, self.tkg_path, show_spinner=True)
+                utils.run_command(cmd, self.tkg_path, show_spinner=False)
             else:
                 # For other distros, the install script handles privileges internally
                 utils.run_command(["./install.sh", "install"], self.tkg_path, show_spinner=True)
@@ -215,7 +216,7 @@ class KernelBuilder:
 
             entry_name = "HvP-Patched-Kernel"
             # TKG kernel names follow a predictable pattern
-            kver = f"linux{self.KERNEL_MAJOR}{self.KERNEL_MINOR}-tkg-eevdf"
+            kver = f"linux{versions.KERNEL_MAJOR}{versions.KERNEL_MINOR}-tkg-eevdf"
 
             entry_content = (
                 f"title   Hypervisor Phantom Kernel ({kver})\n"
