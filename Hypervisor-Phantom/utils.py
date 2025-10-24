@@ -25,6 +25,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, IO
+from PySide6.QtCore import QObject, Signal
 
 # Recommended third-party libraries for a better CLI experience
 try:
@@ -88,8 +89,25 @@ class ConsoleFormatter(logging.Formatter):
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
 
+class QtLogSignal(QObject):
+    """A simple QObject that holds a signal for logging."""
+    # Signal that emits a single string argument
+    message_written = Signal(str)
 
-def setup_logging(log_dir: str = "logs") -> None:
+class QtLoggingHandler(logging.Handler):
+    """
+    A logging handler that emits a Qt signal for each log record.
+    """
+    def __init__(self, signal_emitter: QtLogSignal):
+        super().__init__()
+        self.signal_emitter = signal_emitter
+
+    def emit(self, record: logging.LogRecord):
+        # We use the formatter attached to this handler to format the record
+        message = self.format(record)
+        self.signal_emitter.message_written.emit(message)
+
+def setup_logging(log_dir: str = "logs", qt_signal_emitter: Optional[QtLogSignal] = None) -> None:
     """Initializes logging with separate formats for file and console."""
     global log_handler
     try:
@@ -99,7 +117,6 @@ def setup_logging(log_dir: str = "logs") -> None:
         log_handler = logging.getLogger("hypervisor_phantom")
         log_handler.setLevel(logging.DEBUG)
 
-        # Prevent duplicate handlers if this function is called more than once
         if log_handler.hasHandlers():
             log_handler.handlers.clear()
 
@@ -115,6 +132,13 @@ def setup_logging(log_dir: str = "logs") -> None:
         ch.setLevel(logging.INFO)
         ch.setFormatter(ConsoleFormatter())
         log_handler.addHandler(ch)
+
+        # NEW: Add the Qt handler if an emitter is provided
+        if qt_signal_emitter:
+            qt_handler = QtLoggingHandler(qt_signal_emitter)
+            qt_handler.setLevel(logging.INFO)  # Only show INFO and above in GUI
+            qt_handler.setFormatter(ConsoleFormatter()) # Use the same formatter for colors
+            log_handler.addHandler(qt_handler)
 
     except Exception as e:
         print(f"Critical Error: Failed to initialize logging: {e}", file=sys.stderr)
