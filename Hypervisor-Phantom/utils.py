@@ -186,7 +186,7 @@ def run_command(
                       debug log. Mutually exclusive with capture_output.
         capture_output: If True, capture and return stdout/stderr.
         check: If True, raise CommandExecutionError on non-zero exit codes.
-        env: Optional dictionary of environment variables.
+        env: Optional dictionary of environment variables to add/override.
 
     Returns:
         A CompletedProcess object with stdout, stderr, and returncode.
@@ -208,12 +208,23 @@ def run_command(
         stdout_pipe, stderr_pipe = subprocess.PIPE, subprocess.PIPE
     else: # Stream directly to console
         stdout_pipe, stderr_pipe = None, None
-        
+
     try:
+        # Prepare the environment for the subprocess.
+        # Start with a copy of the current environment to preserve PATH, etc.
+        effective_env = os.environ.copy()
+
+        # If the user passed a custom environment, update our copy with it.
+        if env:
+            effective_env.update(env)
+
+        # Force the C locale to ensure predictable command output for parsing.
+        effective_env['LC_ALL'] = 'C'
+
         process = subprocess.Popen(
             command,
             cwd=cwd,
-            env=env,
+            env=effective_env,
             stdout=stdout_pipe,
             stderr=stderr_pipe,
             stdin=stdin,
@@ -240,7 +251,7 @@ def run_command(
                 stdout,
                 stderr,
             )
-            
+
         if show_spinner:
             log(f"'{command[0]}' completed successfully.")
 

@@ -16,6 +16,7 @@ from pathlib import Path
 
 # Import our custom utility functions
 import utils
+from config import paths, core
 
 
 # ==============================================================================
@@ -76,9 +77,8 @@ class XMLGenerator:
             cpu_vendor: The CPU vendor string (e.g., 'GenuineIntel').
         """
         self.cpu_vendor = cpu_vendor
-        self.project_root = Path.cwd().resolve()
-        self.firmware_dir = self.project_root / "output" / "firmware"
-        self.template_dir = utils.get_resource_path("xml/template")
+        self.firmware_dir = core.OUTPUT_DIR / "firmware"
+        self.template_dir = paths.XML_TEMPLATE_DIR
 
         # Paths to required firmware files
         self.ovmf_code_path = self.firmware_dir / "OVMF_CODE.secboot.4m.qcow2"
